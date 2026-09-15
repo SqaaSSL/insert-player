@@ -19,6 +19,12 @@ import {
   type CachedStageBackground,
   type CachedStageSource,
 } from './SpriteCache.ts';
+import {
+  cachePendingCrewStageUpload,
+  saveCrewStage,
+  type CrewStageIdentity,
+} from './CrewStages.ts';
+import { debugWarn } from './DebugLog.ts';
 
 const STAGE_BACKGROUND_VERSION = 'stage-v1';
 const inflightGenerations = new Map<string, Promise<CachedStageBackground>>();
@@ -47,7 +53,11 @@ export interface PhotoStageCreationResult {
   stage: CachedStageBackground;
   creditsCharged: number;
   creditsBalance?: number;
-  billingMode: 'credits' | 'cache' | 'local';
+  billingMode: 'credits' | 'crew_included' | 'cache' | 'local';
+}
+
+interface CrewStageCreationOptions {
+  crew?: CrewStageIdentity | null;
 }
 
 export function buildPhotoStageKey(photoHash: string): string {
@@ -62,6 +72,7 @@ export async function createPhotoStage(
   file: Blob,
   label?: string,
   source?: CachedStageSource,
+  options: CrewStageCreationOptions = {},
 ): Promise<PhotoStageCreationResult> {
   const apiContext = captureApiRequestContext();
   const ownerScope = getActiveSpriteCacheScope();
@@ -69,7 +80,7 @@ export async function createPhotoStage(
   const stageKey = buildPhotoStageKey(photoHash);
   const safeLabel = sanitizeStageLabel(label);
   const cached = await getCachedStageBackground(stageKey, ownerScope);
-  if (cached?.prompt.includes(STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER)) {
+  if (!options.crew && cached?.prompt.includes(STAGE_GAMEPLAY_CLEARANCE_PROMPT_MARKER)) {
     return {
       stage: await updateCachedPhotoStage(cached, safeLabel, source),
       creditsCharged: 0,
@@ -79,7 +90,9 @@ export async function createPhotoStage(
 
   const base64 = await blobToBase64(file);
   const resized = await resizeImageForApi(base64);
-  const authorization = await authorizeStageForge(apiContext);
+  const authorization = options.crew
+    ? await authorizeStageForge(apiContext, { crewIncluded: true })
+    : await authorizeStageForge(apiContext);
   if (!authorization.authorized) {
     throw new Error(authorization.error ?? 'Stage Forge was not authorized.');
   }
@@ -109,14 +122,38 @@ export async function createPhotoStage(
       source,
     };
 
-    await setCachedStageBackground(created);
+    let uploadCandidate = created;
+    if (
+      options.crew
+      && authorization.stageClaimId
+      && authorization.purchaseId
+    ) {
+      try {
+        uploadCandidate = await cachePendingCrewStageUpload(
+          created,
+          options.crew,
+          authorization.stageClaimId,
+          authorization.purchaseId,
+        );
+      } catch (error) {
+        debugWarn('[Stage] Generated Crew stage could not be cached before upload:', error);
+      }
+    }
+    const savedStage = options.crew
+      ? await saveCrewStage(uploadCandidate, options.crew, authorization.purchaseId, apiContext)
+      : created;
+    if (!options.crew) await setCachedStageBackground(created);
     await finishGenerationPurchase(authorization.purchaseId, true, null, apiContext);
     purchaseSettled = true;
     return {
-      stage: created,
+      stage: savedStage,
       creditsCharged: authorization.creditsCharged,
       creditsBalance: authorization.creditsBalance,
-      billingMode: authorization.mode === 'local' ? 'local' : 'credits',
+      billingMode: options.crew
+        ? 'crew_included'
+        : authorization.mode === 'local'
+          ? 'local'
+          : 'credits',
     };
   } catch (error) {
     if (!purchaseSettled) {
@@ -135,13 +172,14 @@ export async function createDirectPhotoStage(
   file: Blob,
   label?: string,
   source?: CachedStageSource,
+  options: CrewStageCreationOptions = {},
 ): Promise<CachedStageBackground> {
   const ownerScope = getActiveSpriteCacheScope();
   const photoHash = await hashPhoto(file);
   const stageKey = buildDirectPhotoStageKey(photoHash);
   const safeLabel = sanitizeStageLabel(label);
   const cached = await getCachedStageBackground(stageKey, ownerScope);
-  if (cached) return updateCachedPhotoStage(cached, safeLabel, source);
+  if (cached && !options.crew) return updateCachedPhotoStage(cached, safeLabel, source);
 
   const pngBlob = await normalizeStageBlob(file, {
     bottomShadeAlpha: 0.02,
@@ -158,6 +196,7 @@ export async function createDirectPhotoStage(
     source,
   };
 
+  if (options.crew) return saveCrewStage(created, options.crew);
   await setCachedStageBackground(created);
   return created;
 }

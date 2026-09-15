@@ -90,9 +90,10 @@ export interface ProviderSessionAuthorization {
 export interface StageForgeAuthorization extends ProviderSessionAuthorization {
   authorized: boolean;
   purchaseId?: string;
+  stageClaimId?: string;
   creditsCharged: number;
   creditsBalance?: number;
-  mode?: 'credits' | 'local';
+  mode?: 'credits' | 'crew_included' | 'local';
 }
 
 type BillingErrorBody = {
@@ -347,6 +348,7 @@ export async function finishGenerationPurchase(
 
 export async function authorizeStageForge(
   context?: ApiRequestContext,
+  options: { crewIncluded?: boolean } = {},
 ): Promise<StageForgeAuthorization> {
   if (isLocalDevWithoutApi()) {
     return {
@@ -369,7 +371,7 @@ export async function authorizeStageForge(
     const res = await apiFetch('/api/billing/stage-forge', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ legal }),
+      body: JSON.stringify({ legal, crewIncluded: options.crewIncluded === true }),
     }, context);
     const json = await readBillingJson<Omit<StageForgeAuthorization, 'authorized'>>(res);
     if (res.ok) {

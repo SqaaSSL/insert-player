@@ -117,6 +117,11 @@ import {
   referralRookiePasses,
 } from './referrals';
 import {
+  getCrewStageAsset,
+  getCrewStageStatus,
+  uploadCrewStage,
+} from './crewStages';
+import {
   getImportedGlobalVideoRecurationAsset,
   getImportedGlobalVideoRecurationPromoteTransition,
   promoteImportedGlobalVideoRecuration,
@@ -964,6 +969,43 @@ export default {
           request,
           env,
         );
+      }
+
+      if (path === '/api/crew/stage' && method === 'GET') {
+        return addCors(
+          await authenticated(request, env, (auth) => getCrewStageStatus(request, env, auth)),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/crew/stage' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'crew:stage',
+            (auth) => uploadCrewStage(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      const crewStageAssetMatch = path.match(/^\/api\/crew\/stage\/([^/]+)\/asset$/);
+      if (crewStageAssetMatch && (method === 'GET' || method === 'HEAD')) {
+        const stageId = decodePathParam(crewStageAssetMatch[1]);
+        if (isResponse(stageId)) return addCors(stageId, request, env);
+        const response = await authenticated(
+          request,
+          env,
+          (auth) => getCrewStageAsset(env, auth, stageId),
+        );
+        if (method === 'HEAD') return addCors(new Response(null, {
+          status: response.status,
+          headers: response.headers,
+        }), request, env);
+        return addCors(response, request, env);
       }
 
       if (path === '/api/fighters' && method === 'GET') {

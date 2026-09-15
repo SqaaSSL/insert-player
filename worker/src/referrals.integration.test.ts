@@ -118,6 +118,22 @@ const SCHEMA = `
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE crew_stages (
+    clerk_organization_id TEXT PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
+    created_by_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    generation_charge_id TEXT,
+    status TEXT NOT NULL DEFAULT 'reserved',
+    label TEXT NOT NULL DEFAULT 'CREW STAGE',
+    kind TEXT,
+    blob_key TEXT,
+    content_hash TEXT,
+    source_json TEXT,
+    reservation_expires_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `;
 
 const runtimes: Miniflare[] = [];
@@ -292,7 +308,7 @@ describe('Crew referral qualification', () => {
     expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_referrals').first()).toEqual({ count: 0 });
   });
 
-  it('lets Crew members finish after sharing while Crew admins receive the invite mission', async () => {
+  it('lets members finish while Crew admins invite first and then lock one shared stage', async () => {
     const { db, env } = await createBindings();
     await db.batch([
       db.prepare('INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)')
@@ -322,6 +338,8 @@ describe('Crew referral qualification', () => {
       invitesSent: 0,
       sharedWithActiveCrew: true,
       canInviteCrew: true,
+      crewStageReady: false,
+      crewStageState: 'available',
       recommendedStep: 'invite',
       complete: false,
     });
@@ -337,6 +355,24 @@ describe('Crew referral qualification', () => {
     expect(await adminAfterInvite.json()).toMatchObject({
       invitesSent: 1,
       canInviteCrew: true,
+      crewStageReady: false,
+      recommendedStep: 'stage',
+      complete: false,
+    });
+
+    await db.prepare(`
+      INSERT INTO crew_stages (
+        clerk_organization_id, id, created_by_user_id, status, label,
+        kind, blob_key, content_hash
+      ) VALUES (?, 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', ?, 'ready',
+        'THE OLD PARK', 'photo', 'crews/alpha/stage.png', ?)
+    `).bind(ORGANIZATION_ID, INVITEE_ID, 'e'.repeat(64)).run();
+    const adminComplete = await getOnboardingStatus(env, auth(INVITEE_ID, FIGHTER_ID, 'org:admin'));
+    expect(await adminComplete.json()).toMatchObject({
+      invitesSent: 1,
+      sharedWithActiveCrew: true,
+      canInviteCrew: true,
+      crewStageReady: true,
       recommendedStep: 'complete',
       complete: true,
     });

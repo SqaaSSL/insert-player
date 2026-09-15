@@ -8,6 +8,8 @@ import { generateId, hmacIdentifier, normalizePublicDisplayName, upsertClerkUser
 import { AURA_ANIMATION_NAMES } from './fighterAssetPacks';
 import { readJsonBody } from './requestBody';
 import type { AuthContext, Env } from './types';
+import { canManageCrew } from './crewAuthorization';
+import { deleteCrewStageForOrganization } from './crewStages';
 
 const MAX_INVITES_PER_DAY = 5;
 const MAX_REWARDS_PER_INVITER = 3;
@@ -67,18 +69,6 @@ function normalizeInviteEmail(value: unknown): string | null {
   return email;
 }
 
-function canInvite(auth: AuthContext): boolean {
-  const role = auth.activeOrganizationRole?.toLowerCase() ?? '';
-  if (role === 'admin' || role === 'org:admin' || role.endsWith(':admin')) return true;
-  const compactOrganization = auth.claims.o;
-  if (!compactOrganization || typeof compactOrganization !== 'object' || Array.isArray(compactOrganization)) return false;
-  const permissions = (compactOrganization as { per?: unknown; permissions?: unknown }).per
-    ?? (compactOrganization as { permissions?: unknown }).permissions;
-  return Array.isArray(permissions) && permissions.some((permission) => (
-    permission === 'org:sys_memberships:manage' || permission === 'org:sys_memberships:write'
-  ));
-}
-
 function frontendOrigin(env: Env): string {
   for (const value of (env.CORS_ORIGIN ?? '').split(',')) {
     try {
@@ -100,7 +90,7 @@ export async function createCrewInvitation(
   if (!organizationId) {
     return json({ error: 'Create or select a Crew before inviting a friend', code: 'active_organization_required' }, 409);
   }
-  if (!canInvite(auth)) return json({ error: 'Only a Crew admin can invite new members' }, 403);
+  if (!canManageCrew(auth)) return json({ error: 'Only a Crew admin can invite new members' }, 403);
   if (!auth.user.clerk_user_id) return json({ error: 'Your account is not connected to Clerk' }, 409);
 
   const body = await readJsonBody<{ email?: unknown }>(request, MAX_INVITATION_BODY_BYTES);
@@ -245,8 +235,21 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
   `).bind(fighter.id, organizationId).first<{ shared: number }>());
   const passes = await referralRookiePasses(env, auth.userId);
   const hasCrew = Boolean(organizationId);
-  const canInviteCrew = hasCrew && canInvite(auth);
+  const canInviteCrew = hasCrew && canManageCrew(auth);
   const invitesSent = invites?.count ?? 0;
+  const crewStage = organizationId ? await env.DB.prepare(`
+    SELECT id, label, kind, status, created_at
+    FROM crew_stages
+    WHERE clerk_organization_id = ?
+    LIMIT 1
+  `).bind(organizationId).first<{
+    id: string;
+    label: string;
+    kind: 'photo' | 'photo-direct' | null;
+    status: 'reserved' | 'ready';
+    created_at: string;
+  }>() : null;
+  const crewStageReady = crewStage?.status === 'ready';
   return json({
     fighter: fighter ? { id: fighter.id, photoHash: fighter.photo_hash, name: fighter.name } : null,
     activeCrew: hasCrew ? {
@@ -257,13 +260,28 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
     invitesSent,
     sharedWithActiveCrew,
     canInviteCrew,
+    crewStage: crewStageReady ? {
+      id: crewStage.id,
+      label: crewStage.label,
+      kind: crewStage.kind,
+      createdAt: crewStage.created_at,
+    } : null,
+    crewStageState: crewStage?.status ?? (hasCrew ? 'available' : 'unavailable'),
+    crewStageReady,
     referralRookiePasses: passes,
     recommendedStep: !fighter || !hasCrew || !sharedWithActiveCrew
       ? (!fighter ? 'create' : 'crew')
       : canInviteCrew && invitesSent < 1
         ? 'invite'
+        : canInviteCrew && !crewStageReady
+          ? 'stage'
         : 'complete',
-    complete: Boolean(fighter && hasCrew && sharedWithActiveCrew && (!canInviteCrew || invitesSent > 0)),
+    complete: Boolean(
+      fighter
+      && hasCrew
+      && sharedWithActiveCrew
+      && (!canInviteCrew || (crewStageReady && invitesSent > 0)),
+    ),
   });
 }
 
@@ -412,6 +430,7 @@ export async function revokeCrewWebhook(
   if (event.type === 'organization.deleted') {
     const organizationId = event.data.id;
     if (!organizationId) return false;
+    await deleteCrewStageForOrganization(env, organizationId);
     await env.DB.batch([
       env.DB.prepare('DELETE FROM fighter_group_grants WHERE clerk_organization_id = ?').bind(organizationId),
       env.DB.prepare(`
