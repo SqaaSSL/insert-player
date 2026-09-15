@@ -5,7 +5,11 @@ import { assertApprovedArcadeGenerationContract } from './seed-arcade-roster.mjs
 const PRODUCTION_WORKER_URL = 'https://api.insertplayer.ai';
 const PREFLIGHT_PATH = '/api/internal/deploy/image-processor-contract';
 const BRIDGE_HEADER = 'X-Insert-Player-Clerk-Backend-Auth';
-const DEFAULT_ATTEMPTS = 30;
+// Immediate starts a rollout; it does not wait for old instances to exit.
+// Cloudflare allows a 15-minute SIGTERM drain before SIGKILL. Keep the exact
+// contract gate, but allow that documented window plus startup/propagation.
+// https://developers.cloudflare.com/containers/configuration/rollouts/
+const DEFAULT_ATTEMPTS = 60;
 const DEFAULT_INTERVAL_MS = 20_000;
 const REQUEST_TIMEOUT_MS = 15_000;
 
@@ -45,6 +49,20 @@ export function assertProductionWorkerUrl(value) {
 function safeReason(body, status) {
   const candidate = typeof body?.reason === 'string' ? body.reason : `http_${status}`;
   return candidate.toLowerCase().replace(/[^a-z0-9_-]/g, '_').slice(0, 80) || `http_${status}`;
+}
+
+function safeTemplateDiagnostics(body) {
+  const candidate = body?.diagnostics?.templateAtlasCompiler;
+  if (!candidate || typeof candidate.present !== 'boolean') return '';
+  const knownFields = Object.keys(APPROVED_TEMPLATE_ATLAS_COMPILER);
+  const fields = value => Array.isArray(value)
+    ? knownFields.filter(key => value.includes(key)) : [];
+  // Never log an upstream value, unknown key, credential or arbitrary message.
+  return ` Template Atlas: ${JSON.stringify({
+    present: candidate.present,
+    missingFields: fields(candidate.missingFields),
+    mismatchedFields: fields(candidate.mismatchedFields),
+  })}`;
 }
 
 async function responseJson(response) {
@@ -110,7 +128,7 @@ export async function waitForCompatibleImageProcessor({
         `Image processor deployment preflight was rejected (HTTP ${response.status}, ${lastReason}).`,
       );
     }
-    console.log(`Image processor not ready (attempt ${attempt}/${attempts}, ${lastReason}).`);
+    console.log(`Image processor not ready (attempt ${attempt}/${attempts}, ${lastReason}).${safeTemplateDiagnostics(body)}`);
     if (attempt < attempts) await wait(intervalMs);
   }
 

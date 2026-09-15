@@ -192,6 +192,15 @@ Production is intentionally different because its Clerk instance accepts only so
 
 ## Required Branch Rules
 
+The processor preflight permits 60 attempts 20 seconds apart, with a 22-minute
+workflow-step ceiling that preserves time for rollback. Cloudflare's `immediate`
+rollout starts replacement; it does not await completion, and the documented
+SIGTERM drain can last 15 minutes. Readiness still requires the exact compiler
+contract. Machine-authenticated mismatch diagnostics expose only presence and
+known missing/mismatched field names, never upstream values or credentials.
+Do not interpret a successful image push as proof of the executing image, or
+attribute a mismatch to drain/caching without observed evidence.
+
 For both `develop` and `main`:
 
 - Require a pull request.

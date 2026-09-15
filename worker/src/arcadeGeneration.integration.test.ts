@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createGenerationJob } from './generationJobs';
 import {
   readAdminArcadeGenerationContract,
+  readImageProcessorGenerationContract,
   startAdminArcadeAnimationGeneration,
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
@@ -2114,6 +2115,17 @@ describe('official Arcade generation authorization', { timeout: MINIFLARE_TEST_T
 });
 
 describe('official Arcade deployed provider preflight', () => {
+  function healthWithTemplateCompiler(templateAtlasCompiler: unknown) {
+    return {
+      status: 'ok', runtime: 'canvas-skia', imageProviderContract: OFFICIAL_ARCADE_IMAGE_PROVIDER_CONTRACT,
+      templateAtlasCompiler,
+      videoSpriteCompiler: {
+        schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION, compilerVersion: VIDEO_SPRITE_COMPILER_VERSION,
+        processingVersion: VIDEO_SPRITE_PROCESSING_VERSION, automaticSelectionPolicies: VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
+      },
+    };
+  }
+
   it('returns the approved contract only after reading the deployed processor health endpoint', async () => {
     const { env, getByName, processorFetch } = contractEnv({
       status: 'ok',
@@ -2170,6 +2182,106 @@ describe('official Arcade deployed provider preflight', () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: 'Image processor Template Atlas compiler is incompatible',
       reason: 'processor_template_atlas_compiler_incompatible' });
+  });
+
+  it.each([undefined, null])('reports only expected missing keys when the deployment contract is absent (%j)', async value => {
+    const { env } = contractEnv(healthWithTemplateCompiler(value));
+    const response = await readImageProcessorGenerationContract(env, { includeDeploymentDiagnostics: true });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Image processor Template Atlas compiler is incompatible',
+      reason: 'processor_template_atlas_compiler_incompatible',
+      diagnostics: { templateAtlasCompiler: {
+        present: false,
+        missingFields: Object.keys(TEMPLATE_ATLAS_COMPILER_CONTRACT),
+        mismatchedFields: [],
+      } },
+    });
+  });
+
+  it('reports a missing expected field separately from mismatches', async () => {
+    const candidate: Record<string, unknown> = { ...TEMPLATE_ATLAS_COMPILER_CONTRACT };
+    delete candidate.templateManifestSha256;
+    const { env } = contractEnv(healthWithTemplateCompiler(candidate));
+    const response = await readImageProcessorGenerationContract(env, { includeDeploymentDiagnostics: true });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({
+      error: 'Image processor Template Atlas compiler is incompatible',
+      reason: 'processor_template_atlas_compiler_incompatible',
+      diagnostics: { templateAtlasCompiler: {
+        present: true, missingFields: ['templateManifestSha256'], mismatchedFields: [],
+      } },
+    });
+  });
+
+  it('reports a single mismatched expected key without upstream values or extra keys', async () => {
+    const privateValue = 'private-upstream-value-must-not-leak';
+    const privateKey = 'private-upstream-key-must-not-leak';
+    const { env } = contractEnv(healthWithTemplateCompiler({
+      ...TEMPLATE_ATLAS_COMPILER_CONTRACT,
+      processingVersion: privateValue,
+      [privateKey]: { secret: privateValue },
+    }));
+    const response = await readImageProcessorGenerationContract(env, { includeDeploymentDiagnostics: true });
+    expect(response.status).toBe(503);
+    const body = await response.json();
+    expect(body).toEqual({
+      error: 'Image processor Template Atlas compiler is incompatible',
+      reason: 'processor_template_atlas_compiler_incompatible',
+      diagnostics: { templateAtlasCompiler: {
+        present: true, missingFields: [], mismatchedFields: ['processingVersion'],
+      } },
+    });
+    expect(JSON.stringify(body)).not.toContain(privateValue);
+    expect(JSON.stringify(body)).not.toContain(privateKey);
+    expect(JSON.stringify(body)).not.toContain(TEMPLATE_ATLAS_COMPILER_CONTRACT.templateManifestSha256);
+  });
+
+  it.each(['private-malformed-contract', ['private-malformed-contract']])(
+    'keeps malformed contract values private while reporting the bounded missing-key set (%j)', async value => {
+      const { env } = contractEnv(healthWithTemplateCompiler(value));
+      const response = await readImageProcessorGenerationContract(env, { includeDeploymentDiagnostics: true });
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: 'Image processor Template Atlas compiler is incompatible',
+        reason: 'processor_template_atlas_compiler_incompatible',
+        diagnostics: { templateAtlasCompiler: {
+          present: true, missingFields: Object.keys(TEMPLATE_ATLAS_COMPILER_CONTRACT), mismatchedFields: [],
+        } },
+      });
+    },
+  );
+
+  it('leaves the default helper and admin responses private even when upstream sends diagnostic-looking fields', async () => {
+    const payload = healthWithTemplateCompiler({
+      ...TEMPLATE_ATLAS_COMPILER_CONTRACT, processingVersion: 5,
+      diagnostics: { privateValue: 'do-not-reflect' },
+    });
+    for (const response of [
+      await readImageProcessorGenerationContract(contractEnv(payload).env),
+      await readImageProcessorGenerationContract(contractEnv(payload).env, { includeDeploymentDiagnostics: false }),
+      await readAdminArcadeGenerationContract(contractEnv(payload).env, adminAuth),
+    ]) {
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error: 'Image processor Template Atlas compiler is incompatible',
+        reason: 'processor_template_atlas_compiler_incompatible',
+      });
+    }
+  });
+
+  it('does not add diagnostics to an approved contract or change its acceptance gate', async () => {
+    const payload = healthWithTemplateCompiler({
+      ...TEMPLATE_ATLAS_COMPILER_CONTRACT, privateExtra: 'not-returned',
+    });
+    const defaultResponse = await readImageProcessorGenerationContract(contractEnv(payload).env);
+    const diagnosticResponse = await readImageProcessorGenerationContract(contractEnv(payload).env, { includeDeploymentDiagnostics: true });
+    expect(defaultResponse.status).toBe(200);
+    expect(diagnosticResponse.status).toBe(200);
+    const body = await diagnosticResponse.json();
+    expect(body).toEqual(await defaultResponse.json());
+    expect(body).not.toHaveProperty('diagnostics');
+    expect(JSON.stringify(body)).not.toContain('not-returned');
   });
 
   it('fails closed while the deployed processor still advertises the previous Video compiler', async () => {
