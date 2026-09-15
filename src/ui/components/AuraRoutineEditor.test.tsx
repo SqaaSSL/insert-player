@@ -2,54 +2,77 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { MatchSceneData } from '../../game/match/MatchConfig.ts';
 import { AuraRoutineEditor, auraRoutinePlayerSlots, moveAuraGesture, prepareAuraRoutines, replaceAuraGesture } from './AuraRoutineEditor.tsx';
-import type { AuraRoundSelection } from '../../game/aura/AuraChoreography.ts';
+import type { AuraMatchSelection } from '../../game/aura/AuraChoreography.ts';
 
-const routine: AuraRoundSelection = ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'];
+const routine: AuraMatchSelection = [
+  ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
+  ['aura_glide', 'aura_mog_check', 'aura_one_leg'],
+  ['aura_floor_worm', 'aura_one_leg', 'aura_six_seven'],
+];
 
-describe('Aura routine selection', () => {
-  it('allows repeated gestures and reorders individual positions without mutating the saved choice', () => {
-    const chosen = replaceAuraGesture(['aura_six_seven', 'aura_glide', 'aura_floor_worm'], 1, 'aura_six_seven');
-    expect(chosen).toEqual(routine);
-    expect(moveAuraGesture(chosen, 2, -1)).toEqual(['aura_six_seven', 'aura_floor_worm', 'aura_six_seven']);
-    expect(chosen).toEqual(routine);
-    expect(moveAuraGesture(chosen, 0, -1)).toEqual(routine);
-    expect(moveAuraGesture(chosen, 2, 1)).toEqual(routine);
+describe('Aura nine-move selection', () => {
+  it('edits all nine positions independently without mutating saved rounds', () => {
+    for (let index = 0; index < 9; index++) {
+      const name = routine[Math.floor(index / 3)][index % 3] === 'aura_six_seven' ? 'aura_floor_worm' : 'aura_six_seven';
+      const changed = replaceAuraGesture(routine, index, name);
+      expect(changed.flat().filter((move, i) => move !== routine.flat()[i])).toEqual([name]);
+      expect(changed[Math.floor(index / 3)][index % 3]).toBe(name);
+      expect(changed.every((round, i) => round !== routine[i])).toBe(true);
+    }
+    expect(routine[2][2]).toBe('aura_six_seven');
+    expect(replaceAuraGesture(routine, 9, 'aura_glide')).toEqual(routine);
   });
-  it('seeds the CPU with one move per round while exposing only the human seat for editing', () => {
+  it('reorders within and across round boundaries, keeping repeated moves and all nine positions', () => {
+    expect(moveAuraGesture(routine, 2, -1)[0]).toEqual(['aura_six_seven', 'aura_floor_worm', 'aura_six_seven']);
+    const boundary = moveAuraGesture(routine, 2, 1);
+    expect(boundary[0][2]).toBe('aura_glide');
+    expect(boundary[1][0]).toBe('aura_floor_worm');
+    expect(moveAuraGesture(boundary, 3, -1)).toEqual(routine);
+    const secondBoundary = moveAuraGesture(routine, 6, -1);
+    expect(secondBoundary[1][2]).toBe('aura_floor_worm');
+    expect(secondBoundary[2][0]).toBe('aura_one_leg');
+    expect(moveAuraGesture(routine, 0, -1)).toEqual(routine);
+    expect(moveAuraGesture(routine, 8, 1)).toEqual(routine);
+  });
+  it('seeds nine moves for both sides of a solo match, exposing only the human seat for editing', () => {
     const solo = prepareAuraRoutines({ seed: 17, vsAI: true });
     expect(auraRoutinePlayerSlots({ vsAI: true })).toEqual([0]);
-    expect(solo[0]).toHaveLength(3);
-    expect(solo[1]).toHaveLength(3);
+    for (const side of solo) {
+      expect(side).toHaveLength(3);
+      expect(side?.every(round => round.length === 3)).toBe(true);
+      expect(side?.flat()).toHaveLength(9);
+    }
     expect(prepareAuraRoutines({ seed: 17, vsAI: true })).toEqual(solo);
-    expect(prepareAuraRoutines({ seed: 17, vsAI: false }).every(slot => slot?.length === 3)).toBe(true);
+    expect(prepareAuraRoutines({ seed: 17, vsAI: false }).every(slot => slot?.flat().length === 9)).toBe(true);
     expect(prepareAuraRoutines({ seed: 17, cpuVsCpu: true })).toEqual([null, null]);
   });
-  it('lets either online seat choose only its own gestures', () => {
+  it('lets either online seat choose its own nine moves without fabricating the remote choice', () => {
     for (const localSlot of [0, 1] as const) {
       const data = { online: { localSlot } } as MatchSceneData;
       expect(auraRoutinePlayerSlots(data)).toEqual([localSlot]);
       const prepared = prepareAuraRoutines(data);
-      expect(prepared[localSlot]).toHaveLength(3);
+      expect(prepared[localSlot]?.flat()).toHaveLength(9);
       expect(prepared[1 - localSlot]).toBeNull();
     }
   });
-  it('preserves a previous custom choice, including repeats, when opening the editor again', () => {
-    const previous = [routine, ['aura_floor_worm', 'aura_glide', 'aura_one_leg']] as const;
+  it('reopens every round exactly, with deep copies and repeated moves preserved', () => {
+    const previous = [routine, routine] as const;
     const next = prepareAuraRoutines({ seed: 91 }, previous);
     expect(next).toEqual(previous);
     expect(next[0]).not.toBe(routine);
+    expect(next[0]?.every((round, i) => round !== routine[i])).toBe(true);
   });
-  it('shows all available gestures, order and accessible controls without demanding memorized keys', () => {
+  it('shows nine editable positions grouped into three rounds and all available animations', () => {
     const markup = renderToStaticMarkup(<AuraRoutineEditor data={{ p1Name: 'Player A' }} initialRoutines={[routine, null]} onPlay={vi.fn()} onExit={vi.fn()} />);
     expect(markup).toContain('Choose your moves');
-    expect(markup).toContain('Pick one move for each round. Repeat any move you like.');
-    expect(markup).toContain('Each move plays throughout its round.');
+    expect(markup).toContain('Three rounds. Three moves each. Choose all nine');
+    expect(markup.match(/Change round [123] move [123]:/g)).toHaveLength(9);
     expect(markup).toContain('Round 1');
     expect(markup).toContain('Round 2');
     expect(markup).toContain('Round 3');
-    expect(markup).toContain('Change round 2 move: Six seven');
-    expect(markup).toContain('Move round 3 gesture earlier');
-    expect(markup).toContain('Pick a move for round 1');
+    expect(markup).toContain('Change round 3 move 3: Six seven');
+    expect(markup).toContain('Move gesture 9 earlier');
+    expect(markup).toContain('Round 1, move 1: choose an animation');
     expect(markup).toContain('Use this routine');
     expect(markup).toContain('One-leg hop');
     expect(markup).toContain('role="status"');

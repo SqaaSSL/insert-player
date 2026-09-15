@@ -60,10 +60,9 @@ import {
   AURA_ROUTINE_ANIMATION_NAMES,
   AURA_PERFORMANCE_DEFINITIONS,
   auraPerformanceAtBeat,
-  type AuraPerformanceRoutine,
   type AuraRoutineAnimationName,
 } from '../aura/AuraPerformance.ts';
-import { isAuraPerformanceRoutine, normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine } from '../aura/AuraChoreography.ts';
+import { isAuraMatchSelection, normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine, type AuraMatchSelection } from '../aura/AuraChoreography.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 import { AuraComicFeedback } from '../aura/AuraComicFeedback.ts';
 import { AuraScoreFeedback } from '../aura/AuraScoreFeedback.ts';
@@ -158,7 +157,7 @@ function drawNoteGlyph(
 type ResolvedAuraGrade = Exclude<AuraGrade, 'wrong_turn'>;
 
 type AuraOnlineControl =
-  | { t: 'aura_ready'; matchSerial: number; routine?: AuraPerformanceRoutine | null }
+  | { t: 'aura_ready'; matchSerial: number; routine?: AuraMatchSelection | null }
   | { t: 'aura_start'; matchSerial: number; delayMs: number }
   | {
       t: 'aura_judgement';
@@ -185,7 +184,7 @@ function isAuraOnlineControl(value: unknown): value is AuraOnlineControl {
   if (message.t === 'quit') return true;
   if (message.t === 'aura_ready') {
     return Number.isSafeInteger(message.matchSerial) && (message.matchSerial as number) > 0
-      && (message.routine === undefined || message.routine === null || isAuraPerformanceRoutine(message.routine));
+      && (message.routine === undefined || message.routine === null || isAuraMatchSelection(message.routine));
   }
   if (message.t === 'aura_start') {
     return Number.isSafeInteger(message.matchSerial)
@@ -539,7 +538,7 @@ export class AuraScene extends Phaser.Scene {
     this.emitCapture({ id: this.captureId, state: 'preparing' });
     try {
       this.actionRecorder = new AuraRecorder({
-        engineVersion: 'aura-round-selection-v1', matchSeed: this.matchSeed,
+        engineVersion: 'aura-choreography-3x3-v1', matchSeed: this.matchSeed,
         trackId: this.track.id, difficulty: this.difficultyId, stageId: this.resolvedStageId,
         p1Name: this.p1Name, p2Name: this.p2Name,
         p1CloudFighterId: this.p1CloudFighterId, p2CloudFighterId: this.p2CloudFighterId,
@@ -1997,7 +1996,7 @@ export class AuraScene extends Phaser.Scene {
         noteObject.destroy();
       }
     }
-    this.animateFighterForJudgement(judgement);
+    this.animateFighterForJudgement(judgement, atMs);
     this.showFeedback(judgement);
     this.updateScoreUi();
     this.trackMilestone(judgement);
@@ -2082,7 +2081,7 @@ export class AuraScene extends Phaser.Scene {
     this.soundManager.setAuraCrowdMix(this.crowdHeat[slot], this.currentRoundProgress(), negativePunch);
   }
 
-  private animateFighterForJudgement(judgement: AuraJudgement): void {
+  private animateFighterForJudgement(judgement: AuraJudgement, atMs = this.musicClock.timeMs): void {
     // Network results may arrive after a handoff. Score them, but never wake
     // the waiting performer or replace the current performer's visual phrase.
     if (judgement.grade === 'wrong_turn' || this.activePerformerSlot !== judgement.slot) return;
@@ -2090,14 +2089,15 @@ export class AuraScene extends Phaser.Scene {
     const performanceView = this.auraPerformanceViews[judgement.slot];
     const note = judgement.noteId ? this.noteById.get(judgement.noteId) ?? null : null;
     const turn = this.chart.turns[note?.turnIndex ?? this.currentTurnIndex];
-    const hasSelectedRounds = isAuraPerformanceRoutine(this.matchData.auraRoutines?.[judgement.slot]);
+    const hasSelectedRounds = isAuraMatchSelection(this.matchData.auraRoutines?.[judgement.slot]);
     // A late result from this same player's previous round still scores, but
-    // must not replace the move selected for the round now on stage.
+    // must not replace the choreography for the round now on stage.
     if (hasSelectedRounds && note && note.turnIndex !== this.currentTurnIndex) return;
     const routine = turn && (note || hasSelectedRounds) ? resolveAuraPerformanceRoutine(this.matchSeed,
       turn.round, judgement.slot, this.matchData.auraRoutines) : null;
+    const beat = note?.beat ?? (turn ? (atMs - turn.firstNoteMs) / this.chart.beatMs : 0);
     const requested = this.canaryPerformanceOverride
-      ?? (routine ? auraPerformanceAtBeat(routine, note?.beat ?? 0) : null);
+      ?? (routine ? auraPerformanceAtBeat(routine, beat) : null);
     let played: AuraAnimationName | null = requested && performanceView?.play(requested) ? requested : null;
     if (!played && performanceView) {
       const fallback = performanceView.firstRoutineAnimation();

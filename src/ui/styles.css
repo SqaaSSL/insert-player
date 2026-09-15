@@ -5680,6 +5680,12 @@
   .aura-routine__moves {
     @apply m-0 grid list-none grid-cols-3 gap-2 p-0 sm:gap-4;
   }
+  .aura-routine__round {
+    @apply mt-5;
+  }
+  .aura-routine__round h3 {
+    @apply mb-3 font-sans text-sm font-semibold normal-case tracking-normal text-asf-gold;
+  }
   .aura-routine__move {
     @apply min-w-0 overflow-hidden rounded-md border border-asf-line bg-asf-bg-1;
   }
@@ -5687,7 +5693,7 @@
     @apply border-asf-gold bg-asf-bg-2 ring-1 ring-asf-gold;
   }
   .aura-routine__select {
-    @apply relative flex w-full flex-col items-center px-1 pb-3 pt-8 text-asf-text sm:px-3;
+    @apply relative flex w-full flex-col items-center px-1 pb-2 pt-4 text-asf-text sm:px-3;
   }
   .aura-routine__select strong {
     @apply mt-1 min-h-10 content-center text-center text-sm leading-snug sm:min-h-6 sm:text-base;
@@ -5696,7 +5702,7 @@
     @apply absolute left-2 top-2 font-sans text-xs font-semibold text-asf-gold sm:left-3 sm:top-3;
   }
   .aura-routine__gesture {
-    @apply h-24 w-full max-w-36 overflow-hidden sm:h-32;
+    @apply h-16 w-full max-w-36 overflow-hidden sm:h-20;
   }
   .aura-routine__change {
     @apply mt-1 text-[11px] text-asf-muted sm:text-xs;
@@ -5707,11 +5713,11 @@
   .aura-routine__reorder button {
     @apply min-h-11 text-lg text-asf-text hover:bg-asf-bg-2 disabled:cursor-default disabled:opacity-25;
   }
-  .aura-routine__rounds {
-    @apply mb-7 mt-3 text-sm text-asf-muted;
+  .aura-routine__library {
+    @apply mt-3 rounded border border-asf-line p-3;
   }
-  .aura-routine__library h2 {
-    @apply mb-3 font-sans text-base font-semibold normal-case tracking-normal;
+  .aura-routine__library h4 {
+    @apply mb-3 font-sans text-sm font-semibold normal-case tracking-normal;
   }
   .aura-routine__choices {
     @apply grid grid-cols-3 gap-2 sm:grid-cols-5 sm:gap-3;
@@ -5723,7 +5729,7 @@
     @apply border-asf-gold text-asf-gold;
   }
   .aura-routine__choices .aura-routine__gesture {
-    @apply mb-2 h-16 sm:h-20;
+    @apply mb-2 h-12 sm:h-16;
   }
   .aura-routine__footer {
     @apply mt-7 flex flex-col gap-4 border-t border-asf-line pt-5 sm:flex-row sm:items-center sm:justify-between;

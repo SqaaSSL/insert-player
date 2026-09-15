@@ -25,6 +25,19 @@ import type { PeerTransportState } from '../net/PeerTransport.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
 import type { LoadedAuraAnimationPack } from '../aura/AuraSpriteLoader.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
+import { auraPerformanceAtBeat } from '../aura/AuraPerformance.ts';
+import type { AuraMatchSelection } from '../aura/AuraChoreography.ts';
+
+const P1_CHOREOGRAPHY: AuraMatchSelection = [
+  ['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
+  ['aura_glide', 'aura_one_leg', 'aura_mog_check'],
+  ['aura_floor_worm', 'aura_six_seven', 'aura_glide'],
+];
+const P2_CHOREOGRAPHY: AuraMatchSelection = [
+  ['aura_mog_check', 'aura_glide', 'aura_one_leg'],
+  ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
+  ['aura_one_leg', 'aura_floor_worm', 'aura_mog_check'],
+];
 
 const assetLoaders = vi.hoisted(() => ({ aura: vi.fn(), combat: vi.fn() }));
 vi.mock('../sprites/AiSpriteLoader.ts', () => ({ loadAiSprites: assetLoaders.combat }));
@@ -292,10 +305,9 @@ describe('AuraScene loaded performer eligibility', () => {
 describe('AuraScene integrated presentation', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('plays one selected move for every note in a round and advances both players through all three choices', () => {
+  it('plays all nine chosen positions for each player across the real chart’s three rounds', () => {
     const { scene, performance, waiting } = harness();
-    const routines = [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
-      ['aura_glide', 'aura_floor_worm', 'aura_mog_check']];
+    const routines = [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY];
     const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
     Object.assign(scene, { canaryPerformanceOverride: null, matchData: { auraRoutines: routines },
       chart, noteById: new Map(chart.notes.map(note => [note.id, note])) });
@@ -306,7 +318,7 @@ describe('AuraScene integrated presentation', () => {
     }
     for (const [slot, view] of [performance, waiting].entries()) {
       expect(view.play.mock.calls).toEqual(chart.notes.filter(note => note.slot === slot)
-        .map(note => [routines[slot][chart.turns[note.turnIndex].round]]));
+        .map(note => [auraPerformanceAtBeat(routines[slot][chart.turns[note.turnIndex].round], note.beat)]));
       expect(new Set(chart.turns.filter(turn => turn.slot === slot).map(turn => turn.round)))
         .toEqual(new Set([0, 1, 2]));
     }
@@ -314,17 +326,21 @@ describe('AuraScene integrated presentation', () => {
     expect(scene.battle.scoreFor).not.toHaveBeenCalled();
   });
 
-  it('keeps the selected round move on a mash instead of falling back to an unrelated animation', () => {
+  it('uses the current chosen phrase on a mash at all nine positions without resampling the clock', () => {
     const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
     Object.assign(scene, { canaryPerformanceOverride: null,
-      matchData: { auraRoutines: [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'], null] },
-      chart: { turns: [{ round: 0 }, { round: 1 }, { round: 2 }] } });
-    for (const round of [0, 1, 2]) {
-      scene.currentTurnIndex = round;
-      scene.animateFighterForJudgement({ grade: 'mash', slot: 0, lane: 0, noteId: null });
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] }, chart });
+    for (const turn of chart.turns.filter(turn => turn.slot === 0)) {
+      scene.currentTurnIndex = turn.index;
+      for (const beat of [0, 6, 11]) {
+        scene.applyJudgement({ grade: 'mash', slot: 0, lane: 0, noteId: null, combo: 0 }, false,
+          turn.firstNoteMs + beat * chart.beatMs);
+      }
     }
-    expect(performance.play.mock.calls).toEqual([['aura_six_seven'], ['aura_floor_worm'], ['aura_six_seven']]);
+    expect(performance.play.mock.calls).toEqual(P1_CHOREOGRAPHY.flat().map(move => [move]));
     expect(performance.firstRoutineAnimation).not.toHaveBeenCalled();
+    expect(scene.soundManager.getBattleMusicClockSample).not.toHaveBeenCalled();
   });
 
   it.each([1, 2])('scores a delayed round-one note without replacing the same player’s round %i move', round => {
@@ -335,9 +351,9 @@ describe('AuraScene integrated presentation', () => {
     const lateNote = chart.turns[0].notes[0];
     Object.assign(scene, { chart, battle, canaryPerformanceOverride: null, activePerformerSlot: 0,
       currentTurnIndex: currentTurn.index, noteById: new Map(chart.notes.map(note => [note.id, note])),
-      matchData: { auraRoutines: [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'], null] } });
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] } });
     scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: currentTurn.notes[0].id });
-    expect(performance.play).toHaveBeenLastCalledWith(round === 1 ? 'aura_floor_worm' : 'aura_six_seven');
+    expect(performance.play).toHaveBeenLastCalledWith(P1_CHOREOGRAPHY[round][0]);
     performance.play.mockClear();
     const judgement = battle.judgeNote(lateNote.id, 'great', 80)!;
     scene.applyJudgement(judgement, false);
@@ -688,8 +704,8 @@ describe('AuraScene integrated presentation', () => {
 });
 
 describe('AuraScene selected choreography readiness and replay', () => {
-  const local = ['aura_six_seven', 'aura_six_seven', 'aura_one_leg'] as const;
-  const remote = ['aura_glide', 'aura_mog_check', 'aura_floor_worm'] as const;
+  const local = P1_CHOREOGRAPHY;
+  const remote = P2_CHOREOGRAPHY;
 
   function onlineHarness(localSlot: 0 | 1) {
     const { scene } = harness();
@@ -728,6 +744,9 @@ describe('AuraScene selected choreography readiness and replay', () => {
       { t: 'aura_ready', matchSerial: 2, routine: remote },
       { t: 'aura_ready', matchSerial: 3, routine: ['aura_shrug', 'aura_glide', 'aura_glide'] },
       { t: 'aura_ready', matchSerial: 3, routine: ['aura_glide'] },
+      { t: 'aura_ready', matchSerial: 3, routine: ['aura_glide', 'aura_glide', 'aura_one_leg'] },
+      { t: 'aura_ready', matchSerial: 3, routine: remote.flat() },
+      { t: 'aura_ready', matchSerial: 3, routine: [remote[0], remote[1]] },
     ]) scene.onOnlineControl(message);
     expect(scene.remoteOnlineReady).toBe(false);
     expect(scene.matchData.auraRoutines).toEqual([local, null]);
@@ -848,7 +867,7 @@ describe('AuraScene online startup departure', () => {
     expect(scene.remoteRematchReady).toBe(false);
     expect(scene.maybeStartOnlineRematch).not.toHaveBeenCalled();
     expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
-    control({ t: 'aura_ready', matchSerial: 1, routine: ['aura_glide', 'aura_glide', 'aura_one_leg'] });
+    control({ t: 'aura_ready', matchSerial: 1, routine: P2_CHOREOGRAPHY });
     expect(scene.remoteOnlineReady).toBe(true);
     control({ t: 'quit' });
     expect(scene.exitToMenu).toHaveBeenCalledOnce();
@@ -1409,7 +1428,7 @@ describe('AuraScene responsive whole-rig layout', () => {
       chart, battle, track: DEFAULT_AURA_TRACK, difficultyId: 'viral', resolvedStageId: DEFAULT_AURA_STAGE_ID,
       stageLabel: 'AURA PLAZA', p1Name: 'P1', p2Name: 'P2', customStageKey: null,
       matchData: { gameMode: 'aura', p1Name: 'P1', p2Name: 'P2', p1PhotoHash: 'private-local-photo',
-        auraRoutines: [['aura_six_seven', 'aura_six_seven', 'aura_one_leg'], null] },
+        auraRoutines: [P1_CHOREOGRAPHY, null] },
       turnText: controlText(), phaseText: controlText(), comboText: controlText(), lifecycleEpoch: 1, captureId: 'finale-test',
       online: null, isVsAI: true, cpuVsCpu: false, videoRecorder: null,
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
@@ -2147,8 +2166,7 @@ describe('AuraScene asynchronous challenge ownership', () => {
   it('retries P2 at the exact music times, then remixes with the recipient identity still human', () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent, location: { search: '' } });
-    const auraRoutines = [['aura_glide', 'aura_floor_worm', 'aura_mog_check'],
-      ['aura_six_seven', 'aura_six_seven', 'aura_one_leg']] as const;
+    const auraRoutines = [P2_CHOREOGRAPHY, P1_CHOREOGRAPHY] as const;
     const routine = createAuraChallengeRoutine(987, 'viral', 'neon-arena', 'insert-player-arena', auraRoutines)!;
     const challenge = createAuraChallenge(routine, 'Sender', 1_000, 1);
     const match = { ...buildAuraChallengeMatch(challenge), p2Name: 'Recipient', p2PhotoHash: 'own-photo',

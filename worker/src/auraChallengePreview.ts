@@ -4,6 +4,7 @@ import { AURA_CHALLENGE_ASSETS } from '../../src/game/aura/AuraChallengeAssets';
 const ROUTINE_NAMES = ['aura_six_seven', 'aura_mog_check', 'aura_glide', 'aura_floor_worm', 'aura_one_leg'] as const;
 type AuraPreviewGesture = typeof ROUTINE_NAMES[number];
 type AuraPreviewRoutine = readonly [AuraPreviewGesture, AuraPreviewGesture, AuraPreviewGesture];
+type AuraPreviewMatch = readonly [AuraPreviewRoutine, AuraPreviewRoutine, AuraPreviewRoutine];
 
 /** Public transport only. The game validates the current rules and score ceiling
  * before play; a preview is never evidence of a verified or ranked result. */
@@ -20,15 +21,22 @@ export interface AuraChallengePreview {
   name: string;
   score: number;
   slot: 0 | 1;
-  auraRoutines?: readonly [AuraPreviewRoutine | null, AuraPreviewRoutine | null];
+  auraRoutines?: readonly [AuraPreviewMatch | null, AuraPreviewMatch | null];
 }
 
 const KEYS = ['version', 'rules', 'seed', 'difficulty', 'trackId', 'trackVersion', 'stageId', 'stageVersion', 'chartId', 'name', 'score', 'slot'];
 
 function isAuraPreviewRoutines(value: unknown): value is NonNullable<AuraChallengePreview['auraRoutines']> {
   return Array.isArray(value) && value.length === 2
-    && value.every(routine => routine === null || (Array.isArray(routine) && routine.length === 3
-      && routine.every(name => ROUTINE_NAMES.includes(name))));
+    && [0, 1].every(slot => {
+      const rounds = value[slot];
+      return rounds === null || (Array.isArray(rounds) && rounds.length === 3
+        && [0, 1, 2].every(round => {
+          const moves = rounds[round];
+          return Array.isArray(moves) && moves.length === 3
+            && [0, 1, 2].every(move => ROUTINE_NAMES.includes(moves[move]));
+        }));
+    });
 }
 
 export function decodeAuraChallengePreview(token: string): AuraChallengePreview | null {

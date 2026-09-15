@@ -548,7 +548,8 @@ describe('GamePage Aura presentation handoff', () => {
 
 
 describe('Aura choreography launch', () => {
-  const chosen = [['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'], null];
+  const chosen = [[['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
+    ['aura_glide', 'aura_mog_check', 'aura_one_leg'], ['aura_floor_worm', 'aura_one_leg', 'aura_six_seven']], null];
   it('waits for selection and launches the exact chosen gesture order', async () => {
     props.launchTarget = { sceneKey: 'AuraScene', data: { gameMode: 'aura', vsAI: true, seed: 17 } };
     flush(); await vi.dynamicImportSettled();
@@ -581,7 +582,8 @@ describe('Aura choreography launch', () => {
 
 
 describe('Aura selection session and rematch lifecycle', () => {
-  const chosen = [['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'], null];
+  const chosen = [[['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
+    ['aura_glide', 'aura_mog_check', 'aura_one_leg'], ['aura_floor_worm', 'aura_one_leg', 'aura_six_seven']], null];
   it('quits and closes the online session when Back is used before runtime startup', async () => {
     const transport = mockOnlineSession();
     props.launchTarget = { sceneKey: 'AuraScene', data: { online: { localSlot: 0 } as any } };

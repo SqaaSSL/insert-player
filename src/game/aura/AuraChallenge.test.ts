@@ -29,9 +29,13 @@ describe('asynchronous Aura challenge journey', () => {
     expect(buildAuraChallengeMatch(original)).not.toHaveProperty('auraRoutines');
   });
 
-  it.each([0, 1] as const)('preserves one chosen move per round for challenge slot %i with identical scoring', slot => {
-    const auraRoutines = [['aura_six_seven', 'aura_six_seven', 'aura_one_leg'],
-      ['aura_glide', 'aura_mog_check', 'aura_floor_worm']] as const;
+  it.each([0, 1] as const)('preserves all nine chosen positions for challenge slot %i with identical scoring', slot => {
+    const auraRoutines = [
+      [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
+        ['aura_glide', 'aura_one_leg', 'aura_mog_check'], ['aura_one_leg', 'aura_six_seven', 'aura_floor_worm']],
+      [['aura_glide', 'aura_mog_check', 'aura_floor_worm'],
+        ['aura_six_seven', 'aura_six_seven', 'aura_one_leg'], ['aura_mog_check', 'aura_floor_worm', 'aura_glide']],
+    ] as const;
     const selected = createAuraChallengeRoutine(1234, 'viral', DEFAULT_AURA_TRACK.id, 'insert-player-arena', auraRoutines)!;
     expect(selected.rules).not.toBe(AURA_CHALLENGE_RULES);
     expect(selected.chartId).toBe(routine().chartId);
@@ -43,11 +47,13 @@ describe('asynchronous Aura challenge journey', () => {
     expect(isValidStoredMatchData(match)).toBe(true);
     for (const round of [0, 1, 2]) {
       expect(resolveAuraPerformanceRoutine(match.seed!, round, slot, match.auraRoutines))
-        .toEqual(Array(3).fill(auraRoutines[slot][round]));
+        .toEqual(auraRoutines[slot][round]);
     }
     expect(isValidAuraChallengeMatch({ ...match, auraRoutines: [null, null] })).toBe(false);
     expect(isValidAuraChallengeMatch({ ...match, auraRoutines: [auraRoutines[1], auraRoutines[0]] })).toBe(false);
     expect(validateAuraChallenge({ ...challenge, auraRoutines: [['aura_shrug'], null] }).ok).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, auraRoutines: [auraRoutines[0][0], null] }).ok).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, auraRoutines: [auraRoutines[0].flat(), null] }).ok).toBe(false);
     expect(validateAuraChallenge({ ...challenge, rules: AURA_CHALLENGE_RULES }).ok).toBe(false);
   });
 

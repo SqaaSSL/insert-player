@@ -13,6 +13,17 @@ const url = `https://api.insertplayer.ai/challenges/aura/${token}`;
 const env = { CORS_ORIGIN: 'https://sandbox.insertplayer.ai,https://insertplayer.ai',
   get DB() { throw new Error('Must not access D1'); }, get SPRITES() { throw new Error('Must not access R2'); } };
 const encode = value => Buffer.from(JSON.stringify(value)).toString('base64url');
+const firstSelection = [
+  ['aura_six_seven', 'aura_six_seven', 'aura_glide'],
+  ['aura_mog_check', 'aura_floor_worm', 'aura_one_leg'],
+  ['aura_one_leg', 'aura_glide', 'aura_floor_worm'],
+];
+const secondSelection = [
+  ['aura_floor_worm', 'aura_one_leg', 'aura_floor_worm'],
+  ['aura_glide', 'aura_six_seven', 'aura_mog_check'],
+  ['aura_mog_check', 'aura_mog_check', 'aura_six_seven'],
+];
+const withFirstRound = round => [round, firstSelection[1], firstSelection[2]];
 
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
@@ -24,15 +35,22 @@ describe('Aura public challenge transport', () => {
     }
   });
   it.each([
-    ['first player', [['aura_six_seven', 'aura_six_seven', 'aura_glide'], null]],
-    ['second player', [null, ['aura_mog_check', 'aura_floor_worm', 'aura_one_leg']]],
-    ['both players', [['aura_six_seven', 'aura_mog_check', 'aura_glide'], ['aura_floor_worm', 'aura_one_leg', 'aura_floor_worm']]],
+    ['first player', [firstSelection, null]],
+    ['second player', [null, secondSelection]],
+    ['both players', [firstSelection, secondSelection]],
     ['seeded players', [null, null]],
-  ])('preserves selected gestures, their order and repetitions for %s', (_label, auraRoutines) => {
+  ])('preserves all nine gestures, round boundaries, order and repetitions for %s', (_label, auraRoutines) => {
     const selectedRoutine = createAuraChallengeRoutine(42, 'viral', 'neon-arena-155', 'aura-plaza-v3', auraRoutines);
     const value = createAuraChallenge(selectedRoutine, 'Alex', 1000, 1);
     expect(decodeAuraChallengePreview(encodeAuraChallenge(value))).toEqual(value);
     expect(decodeAuraChallengePreview(encodeAuraChallenge(value)).auraRoutines).toEqual(auraRoutines);
+  });
+  it('fits both complete selections and a maximum-length Unicode name in the existing token limit', () => {
+    const rounds = Array.from({ length: 3 }, () => Array(3).fill('aura_floor_worm'));
+    const value = createAuraChallenge(createAuraChallengeRoutine(42, 'viral', 'neon-arena-155', 'aura-plaza-v3', [rounds, rounds]), '😎'.repeat(32), 1000, 0);
+    const selectedToken = encodeAuraChallenge(value);
+    expect(selectedToken.length).toBeLessThanOrEqual(2048);
+    expect(decodeAuraChallengePreview(selectedToken)).toEqual(value);
   });
   it.each([
     ['huge token', () => 'a'.repeat(2049)], ['invalid base64', () => '!'],
@@ -50,13 +68,21 @@ describe('Aura public challenge transport', () => {
     ['null routines', () => encode({ ...challenge, auraRoutines: null })],
     ['one routine slot', () => encode({ ...challenge, auraRoutines: [null] })],
     ['three routine slots', () => encode({ ...challenge, auraRoutines: [null, null, null] })],
-    ['routine object', () => encode({ ...challenge, auraRoutines: [{ 0: 'aura_glide', 1: 'aura_glide', 2: 'aura_glide' }, null] })],
-    ['short routine', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_glide'], null] })],
-    ['long routine', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_glide', 'aura_glide', 'aura_glide'], null] })],
-    ['unknown gesture', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'private_gesture', 'aura_glide'], null] })],
-    ['idle gesture', () => encode({ ...challenge, auraRoutines: [['aura_glide', 'aura_unbothered', 'aura_glide'], null] })],
-    ['reaction gesture', () => encode({ ...challenge, auraRoutines: [null, ['aura_glide', 'aura_shrug', 'aura_glide']] })],
-    ['non-string gesture', () => encode({ ...challenge, auraRoutines: [null, ['aura_glide', 1, 'aura_glide']] })],
+    ['old flat three-move selection', () => encode({ ...challenge, auraRoutines: [firstSelection[0], null] })],
+    ['flattened nine-move selection', () => encode({ ...challenge, auraRoutines: [firstSelection.flat(), null] })],
+    ['round object', () => encode({ ...challenge, auraRoutines: [withFirstRound({ 0: 'aura_glide', 1: 'aura_glide', 2: 'aura_glide' }), null] })],
+    ['missing round', () => encode({ ...challenge, auraRoutines: [firstSelection.slice(0, 2), null] })],
+    ['extra round', () => encode({ ...challenge, auraRoutines: [[...firstSelection, firstSelection[0]], null] })],
+    ['sparse rounds', () => encode({ ...challenge, auraRoutines: [new Array(3), null] })],
+    ['null round', () => encode({ ...challenge, auraRoutines: [withFirstRound(null), null] })],
+    ['sparse gestures', () => encode({ ...challenge, auraRoutines: [withFirstRound(new Array(3)), null] })],
+    ['short round', () => encode({ ...challenge, auraRoutines: [withFirstRound(['aura_glide', 'aura_glide']), null] })],
+    ['long round', () => encode({ ...challenge, auraRoutines: [withFirstRound(['aura_glide', 'aura_glide', 'aura_glide', 'aura_glide']), null] })],
+    ['extra nesting', () => encode({ ...challenge, auraRoutines: [withFirstRound([firstSelection[0], firstSelection[1], firstSelection[2]]), null] })],
+    ['unknown gesture', () => encode({ ...challenge, auraRoutines: [withFirstRound(['aura_glide', 'private_gesture', 'aura_glide']), null] })],
+    ['idle gesture', () => encode({ ...challenge, auraRoutines: [withFirstRound(['aura_glide', 'aura_unbothered', 'aura_glide']), null] })],
+    ['reaction gesture', () => encode({ ...challenge, auraRoutines: [null, withFirstRound(['aura_glide', 'aura_shrug', 'aura_glide'])] })],
+    ['non-string gesture', () => encode({ ...challenge, auraRoutines: [null, withFirstRound(['aura_glide', 1, 'aura_glide'])] })],
     ['duplicate key', () => Buffer.from(JSON.stringify(challenge).replace('"score":12500', '"score":1,"score":12500')).toString('base64url')],
   ])('fails closed for %s before rendering or storage', async (_label, invalid) => {
     expect(decodeAuraChallengePreview(invalid())).toBeNull();
@@ -66,8 +92,8 @@ describe('Aura public challenge transport', () => {
 });
 
 describe('Aura social HTML and PNG routes', () => {
-  it('carries a chosen choreography through the public link to the playable challenge', async () => {
-    const auraRoutines = [['aura_six_seven', 'aura_six_seven', 'aura_glide'], ['aura_one_leg', 'aura_floor_worm', 'aura_mog_check']];
+  it('carries three rounds of three chosen moves through the public link to the playable challenge', async () => {
+    const auraRoutines = [firstSelection, secondSelection];
     const selectedRoutine = createAuraChallengeRoutine(42, 'viral', 'neon-arena-155', 'aura-plaza-v3', auraRoutines);
     const selectedChallenge = createAuraChallenge(selectedRoutine, 'Alex', 1000, 0);
     const selectedToken = encodeAuraChallenge(selectedChallenge);

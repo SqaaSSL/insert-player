@@ -29,7 +29,7 @@ export interface AuraRecordingConfig {
   p2CloudFighterId?: string | null;
   /** Stable public cast for offline quickplay recordings with no cloud ids. */
   auraTrialPreset?: 'trump-lamine';
-  /** Chosen gesture order. Omission preserves the legacy seeded performance. */
+  /** Nine chosen positions per player, grouped in three rounds. Omission keeps legacy seeded performance. */
   auraRoutines?: AuraSelectedRoutines;
   chart: AuraChart;
 }
