@@ -50,6 +50,7 @@ import {
   AURA_DEFAULT_LANE_KEYS,
   AURA_LOCAL_P1_LANE_KEYS,
   AURA_LOCAL_P2_LANE_KEYS,
+  AURA_PHRASE_BEATS,
   AURA_ROUNDS,
   getAuraDifficulty,
   type AuraLaneKeys,
@@ -325,6 +326,8 @@ export class AuraScene extends Phaser.Scene {
   private lastMilestone: [number, number] = [0, 0];
   private playerTags!: [Phaser.GameObjects.Container, Phaser.GameObjects.Container];
   private currentTurnIndex = -2;
+  private selectedPhraseProgress: [{ turnIndex: number; phrase: number } | null,
+    { turnIndex: number; phrase: number } | null] = [null, null];
 
   private keysP1: Phaser.Input.Keyboard.Key[] = [];
   private keysP2: Phaser.Input.Keyboard.Key[] = [];
@@ -445,6 +448,7 @@ export class AuraScene extends Phaser.Scene {
     this.finaleWinner = null;
     this.stageFrame = null;
     this.currentTurnIndex = -2;
+    this.selectedPhraseProgress = [null, null];
     this.clockStartedAt = null;
     this.musicClock.reset();
     this.scheduledClockStart = null;
@@ -2096,6 +2100,11 @@ export class AuraScene extends Phaser.Scene {
     const routine = turn && (note || hasSelectedRounds) ? resolveAuraPerformanceRoutine(this.matchSeed,
       turn.round, judgement.slot, this.matchData.auraRoutines) : null;
     const beat = note?.beat ?? (turn ? (atMs - turn.firstNoteMs) / this.chart.beatMs : 0);
+    const phrase = Math.min(2, Math.max(0, Math.floor(Math.max(0, beat) * 3 / AURA_PHRASE_BEATS)));
+    const previous = this.selectedPhraseProgress[judgement.slot];
+    // Inputs and collected misses can arrive out of note order. Keep selected
+    // positions moving forward even when two positions share the same gesture.
+    if (hasSelectedRounds && previous?.turnIndex === this.currentTurnIndex && phrase < previous.phrase) return;
     const requested = this.canaryPerformanceOverride
       ?? (routine ? auraPerformanceAtBeat(routine, beat) : null);
     let played: AuraAnimationName | null = requested && performanceView?.play(requested) ? requested : null;
@@ -2108,6 +2117,9 @@ export class AuraScene extends Phaser.Scene {
       performanceView.update(0, this.views[judgement.slot]);
     } else {
       fighter.forceState(this.choreographyFor(judgement));
+    }
+    if (hasSelectedRounds && turn && (played || !performanceView)) {
+      this.selectedPhraseProgress[judgement.slot] = { turnIndex: this.currentTurnIndex, phrase };
     }
     // Context belongs to the move actually rendered, not an unavailable pack.
     if (played && (judgement.grade === 'perfect' || judgement.grade === 'great' || judgement.grade === 'good')) {

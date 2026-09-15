@@ -149,7 +149,7 @@ function harness(withPack = true) {
     canaryPerformanceOverride: 'aura_six_seven',
     noteById: new Map([['n1', { id: 'n1', beat: 0.5, turnIndex: 0 }]]),
     chart: { turns: [{ round: 0, slot: 0, startMs: 0, endMs: 10_000 }], beatMs: 500, beatOffsetMs: 0 },
-    matchSeed: 67, currentTurnIndex: 0, noteObjects: new Map(), lastMilestone: [0, 0],
+    matchSeed: 67, currentTurnIndex: 0, selectedPhraseProgress: [null, null], noteObjects: new Map(), lastMilestone: [0, 0],
     comicFeedback: { move: vi.fn(), judgement: vi.fn(), milestone: vi.fn(), beginTurn: vi.fn() },
     // Regression sentinels: none of the removed world/sprite feedback paths may run.
     spawnPerformanceSparks: vi.fn(), playAuraBurst: vi.fn(), dipSpotlight: vi.fn(),
@@ -361,6 +361,81 @@ describe('AuraScene integrated presentation', () => {
     expect(battle.scoreFor(0).score).toBeGreaterThan(0);
     expect(scene.updateScoreUi).toHaveBeenCalledOnce();
     expect(performance.play).not.toHaveBeenCalled();
+  });
+
+  it.each([6, 11])('scores and records older same-round network notes without rewinding the chosen phrase at beat %i', beat => {
+    const { scene, recorder, chart } = recordingHarness();
+    const turn = chart.turns[0];
+    const latest = turn.notes.find(note => note.beat === beat)!;
+    const older = turn.notes.filter(note => note.beat === 0 || (beat === 11 && note.beat === 6));
+    const atMs = latest.atMs + 30;
+    Object.assign(scene, { canaryPerformanceOverride: null, currentTurnIndex: turn.index,
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] },
+      online: { localSlot: 1, matchSerial: 7 } });
+    recorder.setRoutines([P1_CHOREOGRAPHY, null]);
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'playing', positionMs: atMs,
+      durationMs: null, loop: false });
+    const deliver = (noteId: string) => scene.onOnlineControl({
+      t: 'aura_judgement', matchSerial: 7, noteId, grade: 'great', offsetMs: 30,
+    });
+    deliver(latest.id);
+    const view = scene.auraPerformanceViews[0];
+    expect(view.play).toHaveBeenLastCalledWith(auraPerformanceAtBeat(P1_CHOREOGRAPHY[0], beat));
+    view.play.mockClear();
+    scene.comicFeedback.move.mockClear();
+    older.forEach(note => deliver(note.id));
+    expect(view.play).not.toHaveBeenCalled();
+    expect(scene.comicFeedback.move).not.toHaveBeenCalled();
+    expect(scene.battle.scoreFor(0).great).toBe(older.length + 1);
+    expect(recorder.toRecording().events.map(event => event.judgement.noteId))
+      .toEqual([latest.id, ...older.map(note => note.id)]);
+    expect(recorder.toRecording().events.map(event => event.atMs)).toEqual(Array(older.length + 1).fill(atMs));
+  });
+
+  it('keeps an early next-phrase hit visible when a previous note misses, then permits the next round’s first phrase', () => {
+    const { scene, recorder, chart } = recordingHarness();
+    const turn = chart.turns[0];
+    const nextPhrase = turn.notes.find(note => note.beat === 6)!;
+    const oldNote = turn.notes.find(note => note.beat === 5)!;
+    Object.assign(scene, { canaryPerformanceOverride: null, currentTurnIndex: turn.index,
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] } });
+    recorder.setRoutines([P1_CHOREOGRAPHY, null]);
+    scene.applyJudgement(scene.battle.judgeNote(nextPhrase.id, 'great', -80), false, nextPhrase.atMs - 80);
+    const view = scene.auraPerformanceViews[0];
+    expect(view.play).toHaveBeenLastCalledWith(P1_CHOREOGRAPHY[0][1]);
+    view.play.mockClear();
+    scene.applyJudgement(scene.battle.judgeNote(oldNote.id, 'miss', 160), false, nextPhrase.atMs);
+    expect(view.play).not.toHaveBeenCalled();
+    expect(scene.battle.scoreFor(0).misses).toBe(1);
+    expect(recorder.toRecording().events.map(event => event.judgement.grade)).toEqual(['great', 'miss']);
+    const followingTurn = chart.turns.find(candidate => candidate.slot === 0 && candidate.round === 1)!;
+    scene.currentTurnIndex = followingTurn.index;
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: followingTurn.notes[0].id });
+    expect(view.play).toHaveBeenCalledExactlyOnceWith(P1_CHOREOGRAPHY[1][0]);
+  });
+
+  it('clears selected phrase progress when the same scene starts a fresh match', () => {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), location: { search: '' } });
+    const scene = new AuraScene() as unknown as Record<string, any>;
+    scene.init({ gameMode: 'aura', auraRoutines: [P1_CHOREOGRAPHY, null] });
+    scene.selectedPhraseProgress = [{ turnIndex: 0, phrase: 2 }, { turnIndex: 1, phrase: 1 }];
+    scene.init({ gameMode: 'aura', auraRoutines: [P1_CHOREOGRAPHY, null] });
+    expect(scene.selectedPhraseProgress).toEqual([null, null]);
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves legacy unselected note-driven presentation when older feedback arrives', () => {
+    const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    Object.assign(scene, { canaryPerformanceOverride: null, chart,
+      noteById: new Map(chart.notes.map(note => [note.id, note])) });
+    const latePhrase = chart.turns[0].notes.find(note => note.beat === 11)!;
+    const oldPhrase = chart.turns[0].notes[0];
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: latePhrase.id });
+    performance.play.mockClear();
+    scene.animateFighterForJudgement({ grade: 'miss', slot: 0, lane: 0, noteId: oldPhrase.id });
+    expect(performance.play).toHaveBeenCalledOnce();
+    expect(scene.selectedPhraseProgress).toEqual([null, null]);
   });
 
   it.each(['perfect', 'great', 'good', 'miss', 'mash'])('keeps the selected Aura pack on %s and sends only UI feedback', grade => {
