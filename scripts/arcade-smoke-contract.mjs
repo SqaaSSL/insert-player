@@ -2,6 +2,16 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+export const MATCH_FIGHTER_OWNERSHIP_ERROR = 'Match fighter is not available to this player';
+
+export function assertForeignMatchOwnershipRejection(status, body) {
+  assert(status === 403, `foreign fighter match report expected 403, got ${status}`);
+  assert(
+    body?.error === MATCH_FIGHTER_OWNERSHIP_ERROR,
+    'Foreign fighter match report did not reject by ownership',
+  );
+}
+
 export function assertOfficialArcadeContract(fighter) {
   // New Champion packs retain the canonical contender id. Legacy champion
   // assets keep their original provenance; a public pack cannot mix tiers.
