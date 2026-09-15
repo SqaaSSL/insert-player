@@ -1,3 +1,9 @@
+/**
+ * @deprecated Legacy wire IDs, retained for current execution and exact job
+ * recovery. These are not public UI choices and are not the new atlas pipelines.
+ * A successor needs its own persisted version, never a rename of these IDs.
+ * See docs/generation-pipeline-transition.md.
+ */
 export const GENERATION_CREATION_FLOWS = ['original', 'video'] as const;
 
 export type GenerationCreationFlow = typeof GENERATION_CREATION_FLOWS[number];

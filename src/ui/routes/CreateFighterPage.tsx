@@ -1220,7 +1220,7 @@ export function CreateFighterPage({
               {insufficientCredits
                 ? `${selectedTier?.label ?? 'This tier'} needs ${selectedQuote.creditCost} credits · you have ${billingProfile?.creditsBalance ?? 0}`
                 : file
-                ? `${file.name} · ${creationFlow === 'video' ? 'Video flow' : 'Original flow'}`
+                ? file.name
                 : 'Pick a photo to continue'}
             </small>
           </button>

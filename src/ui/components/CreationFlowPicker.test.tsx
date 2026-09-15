@@ -3,12 +3,29 @@ import { describe, expect, it, vi } from 'vitest';
 import { CreationFlowPicker } from './CreationFlowPicker';
 
 describe('CreationFlowPicker', () => {
-  it('uses native radios and keeps Original selected by default', () => {
+  it.each(['original', 'video'] as const)('renders no DOM by default for the %s legacy flow', (value) => {
+    const onChange = vi.fn();
+    const markup = renderToStaticMarkup(
+      <CreationFlowPicker name="hidden-creation-flow" value={value} onChange={onChange} />,
+    );
+
+    expect(markup).toBe('');
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('renders no DOM when internal review is explicitly disabled', () => {
+    expect(renderToStaticMarkup(
+      <CreationFlowPicker name="hidden-creation-flow" value="original" onChange={vi.fn()} internalReview={false} />,
+    )).toBe('');
+  });
+
+  it('uses native radios and preserves the selected flow in opted-in internal review', () => {
     const markup = renderToStaticMarkup(
       <CreationFlowPicker
         name="fighter-creation-flow"
         value="original"
         onChange={vi.fn()}
+        internalReview
       />,
     );
 
@@ -29,6 +46,7 @@ describe('CreationFlowPicker', () => {
         videoAvailable={false}
         videoUnavailableReason="Sign in to try Video."
         compact
+        internalReview
       />,
     );
 
