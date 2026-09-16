@@ -27,6 +27,7 @@ export function GalleryStageList({
   const owned = entries.flatMap((entry, index) => (
     entry.scope === 'owned' ? [{ entry, index }] : []
   ));
+  const hasCrewStage = owned.some(({ entry }) => entry.stage.cloudManagement === 'crew');
 
   return (
     <div className="gallery-sidebar__list gallery-fighter-list">
@@ -61,7 +62,7 @@ export function GalleryStageList({
       <section className="gallery-fighter-list__group" aria-labelledby="gallery-owned-stages-title">
         <header className="gallery-fighter-list__header">
           <h2 id="gallery-owned-stages-title" className="gallery-fighter-list__title">
-            Your stages
+            {hasCrewStage ? 'Your & Crew stages' : 'Your stages'}
           </h2>
           <span
             className="gallery-fighter-list__count"
@@ -88,7 +89,9 @@ export function GalleryStageList({
               {(entry.stage.label ?? 'PHOTO STAGE').toUpperCase()}
             </span>
             <span className="gallery-fighter-card__meta">
-              {formatDate(entry.stage.createdAt)} · {entry.stage.kind === 'photo-direct' ? 'direct photo' : 'forged'}
+              {entry.stage.cloudManagement === 'crew'
+                ? `${entry.stage.cloudCrewName ?? 'Crew'} · shared home stage`
+                : `${formatDate(entry.stage.createdAt)} · ${entry.stage.kind === 'photo-direct' ? 'direct photo' : 'forged'}`}
             </span>
           </button>
         ))}

@@ -184,7 +184,32 @@ function publicAuth(auth: AuthContext): PublicAuthContext {
   };
 }
 
-export async function readImageProcessorGenerationContract(env: Env): Promise<Response> {
+function templateAtlasDeploymentDiagnostics(value: unknown): {
+  present: boolean;
+  missingFields: string[];
+  mismatchedFields: string[];
+} {
+  const candidate = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+  const missingFields: string[] = [];
+  const mismatchedFields: string[] = [];
+  // Only enumerate our expected keys: upstream values and extra keys may contain
+  // private deployment details and must never enter the diagnostic response.
+  for (const [key, expected] of Object.entries(TEMPLATE_ATLAS_COMPILER_CONTRACT)) {
+    if (!candidate || !Object.prototype.hasOwnProperty.call(candidate, key)) {
+      missingFields.push(key);
+    } else if (JSON.stringify(candidate[key]) !== JSON.stringify(expected)) {
+      mismatchedFields.push(key);
+    }
+  }
+  return { present: value != null, missingFields, mismatchedFields };
+}
+
+export async function readImageProcessorGenerationContract(
+  env: Env,
+  options: { includeDeploymentDiagnostics?: boolean } = {},
+): Promise<Response> {
   if (!env.IMAGE_PROCESSOR) {
     return json({
       error: 'Image processor binding is unavailable',
@@ -256,6 +281,11 @@ export async function readImageProcessorGenerationContract(env: Env): Promise<Re
       return json({
         error: 'Image processor Template Atlas compiler is incompatible',
         reason: 'processor_template_atlas_compiler_incompatible',
+        ...(options.includeDeploymentDiagnostics === true ? {
+          diagnostics: {
+            templateAtlasCompiler: templateAtlasDeploymentDiagnostics(payload.templateAtlasCompiler),
+          },
+        } : {}),
       }, 503);
     }
     return json({

@@ -57,6 +57,8 @@ describe('production image processor contract check', () => {
       const probe = workflow.indexOf('run: npm run check:image-processor-contract');
       const pages = workflow.indexOf('run: npm run deploy:frontend');
       expect(probe).toBeGreaterThan(0); expect(pages).toBeGreaterThan(probe);
+      const probeStep = workflow.slice(workflow.lastIndexOf('      - name:', probe), probe);
+      expect(probeStep).toContain('timeout-minutes: 22');
     }
   });
   it('is pinned to the canonical production Worker', () => {
@@ -94,6 +96,47 @@ describe('production image processor contract check', () => {
       wait,
     })).resolves.toEqual(approvedContract);
     expect(wait).toHaveBeenCalledOnce();
+  });
+
+  it('allows the documented 15-minute drain before accepting the exact contract', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const request = vi.fn().mockResolvedValue(Response.json(approvedContract));
+      for (let index = 0; index < 46; index += 1) {
+        request.mockResolvedValueOnce(Response.json({
+          reason: 'processor_template_atlas_compiler_incompatible',
+        }, { status: 503 }));
+      }
+      const wait = vi.fn(async () => {});
+      await expect(waitForCompatibleImageProcessor({
+        workerUrl: WORKER_URL, bridgeSecret: BRIDGE_SECRET, request, wait,
+      })).resolves.toEqual(approvedContract);
+      expect(request).toHaveBeenCalledTimes(47);
+      expect(wait).toHaveBeenCalledTimes(46);
+      expect(wait).toHaveBeenLastCalledWith(20_000);
+    } finally { log.mockRestore(); }
+  });
+
+  it('logs only known mismatch field names, never upstream values or unknown keys', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      await expect(waitForCompatibleImageProcessor({
+        workerUrl: WORKER_URL, bridgeSecret: BRIDGE_SECRET, attempts: 1,
+        request: async () => Response.json({
+          reason: 'processor_template_atlas_compiler_incompatible',
+          diagnostics: { templateAtlasCompiler: {
+            present: true, missingFields: ['templateManifestSha256', 'secret-key-do-not-log'],
+            mismatchedFields: ['model', 'secret-key-do-not-log'],
+            raw: 'secret-value-do-not-log',
+          } },
+        }, { status: 503 }),
+      })).rejects.toThrow(/did not become ready/);
+      const output = JSON.stringify(log.mock.calls);
+      expect(output).toContain('templateManifestSha256');
+      expect(output).toContain('model');
+      expect(output).not.toContain('secret-');
+      expect(output).not.toContain(BRIDGE_SECRET);
+    } finally { log.mockRestore(); }
   });
 
   it('fails immediately on a permanent authentication error', async () => {

@@ -17,8 +17,16 @@ export interface OnboardingStatus {
   invitesSent: number;
   sharedWithActiveCrew: boolean;
   canInviteCrew: boolean;
+  crewStage: {
+    id: string;
+    label: string;
+    kind: 'photo' | 'photo-direct';
+    createdAt: string;
+  } | null;
+  crewStageState: 'unavailable' | 'available' | 'reserved' | 'ready';
+  crewStageReady: boolean;
   referralRookiePasses: number;
-  recommendedStep: 'create' | 'crew' | 'invite' | 'complete';
+  recommendedStep: 'create' | 'crew' | 'stage' | 'invite' | 'complete';
   complete: boolean;
 }
 

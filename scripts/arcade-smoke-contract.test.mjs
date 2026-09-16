@@ -1,5 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { assertOfficialArcadeContract } from './arcade-smoke-contract.mjs';
+import { readFileSync } from 'node:fs';
+import { assertForeignMatchOwnershipRejection, assertOfficialArcadeContract,
+  MATCH_FIGHTER_OWNERSHIP_ERROR } from './arcade-smoke-contract.mjs';
+
+describe('foreign match ownership smoke contract', () => {
+  it('requires the exact current ownership error and HTTP 403', () => {
+    expect(() => assertForeignMatchOwnershipRejection(403, { error: MATCH_FIGHTER_OWNERSHIP_ERROR })).not.toThrow();
+  });
+
+  it.each([200, 400, 401, 404, 429, 500, '403', undefined])('rejects status %s even with the correct error', status => {
+    expect(() => assertForeignMatchOwnershipRejection(status, { error: MATCH_FIGHTER_OWNERSHIP_ERROR })).toThrow(/expected 403/);
+  });
+
+  it.each(['Forbidden', 'Unauthorized', 'Internal error', 'not owned or an active Arcade fighter',
+    `${MATCH_FIGHTER_OWNERSHIP_ERROR}.`, '', null, undefined])('rejects generic, obsolete, or altered error %s', error => {
+    expect(() => assertForeignMatchOwnershipRejection(403, { error })).toThrow(/did not reject by ownership/);
+  });
+
+  it('rejects missing response bodies', () => {
+    expect(() => assertForeignMatchOwnershipRejection(403, null)).toThrow(/did not reject by ownership/);
+  });
+
+  it('stays aligned with both Worker player-slot guards and the live smoke call', () => {
+    const worker = readFileSync(new URL('../worker/src/index.ts', import.meta.url), 'utf8');
+    const response = `return json({ error: '${MATCH_FIGHTER_OWNERSHIP_ERROR}' }, 403);`;
+    for (const slot of ['p1', 'p2']) {
+      expect(worker).toContain(`if (body.${slot}FighterId && !${slot}FighterId) {\n            ${response}`);
+    }
+    const smoke = readFileSync(new URL('./smoke-live.mjs', import.meta.url), 'utf8');
+    expect(smoke).toContain('assertForeignMatchOwnershipRejection(foreignMatchRes.status, foreignMatch);');
+  });
+});
 
 function fighter(qualityTier = 'contender', kind = 'generated') {
   return {

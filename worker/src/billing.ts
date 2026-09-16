@@ -40,6 +40,7 @@ import { STAGE_FORGE_CREDIT_COST } from '../../src/shared/StageForgePricing';
 import { atlasAnimationPlan, requestedGenerationRenderer, rendererMatchesTier, storedGenerationRenderer } from './templateGenerationPolicy';
 import { type GenerationRendererVersion, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 import { meterkeyBaseUrl } from './geminiTransport';
+import { canManageCrew } from './crewAuthorization';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -364,6 +365,12 @@ async function releaseReservedGenerationCharge(
         SET status = 'unused', reserved_charge_id = NULL, updated_at = datetime('now')
         WHERE id = ? AND status = 'reserved' AND reserved_charge_id = ?
       `).bind(charge.entitlement_id, charge.id));
+  }
+  if (charge.reason === 'crew_stage_included') {
+    statements.push(env.DB.prepare(`
+      DELETE FROM crew_stages
+      WHERE generation_charge_id = ? AND status = 'reserved'
+    `).bind(charge.id));
   }
   const [claim] = await env.DB.batch(statements);
 
@@ -1554,7 +1561,10 @@ export async function authorizeStageForgePurchase(
     }, 401);
   }
 
-  const body = await readJsonBody<{ legal?: unknown }>(request, MAX_BILLING_JSON_BODY_BYTES);
+  const body = await readJsonBody<{
+    legal?: unknown;
+    crewIncluded?: unknown;
+  }>(request, MAX_BILLING_JSON_BODY_BYTES);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({
@@ -1570,6 +1580,170 @@ export async function authorizeStageForgePurchase(
     WHERE id = ?
   `).bind(auth.user.id).first<{ id: string; credits_balance: number }>();
   if (!user) return json({ authorized: false, error: 'Account not found' }, 401);
+
+  if (body.crewIncluded === true) {
+    const organizationId = auth.activeOrganizationId?.trim();
+    if (!organizationId) {
+      return json({
+        authorized: false,
+        error: 'Create or select a Crew before choosing its included stage',
+        code: 'active_organization_required',
+      }, 409);
+    }
+    if (!canManageCrew(auth)) {
+      return json({
+        authorized: false,
+        error: 'Only a Crew admin can use the included Crew stage',
+      }, 403);
+    }
+
+    const existing = await env.DB.prepare(`
+      SELECT cs.id, cs.created_by_user_id, cs.status, cs.generation_charge_id,
+             charge.status AS charge_status, charge.expires_at AS charge_expires_at,
+             session.id AS session_id, session.expires_at AS session_expires_at,
+             session.provider_call_limit, session.provider_cost_limit_cents,
+             session.provider_calls_used
+      FROM crew_stages cs
+      LEFT JOIN generation_charges charge ON charge.id = cs.generation_charge_id
+      LEFT JOIN provider_sessions session
+        ON session.charge_id = charge.id
+       AND session.status = 'active'
+       AND datetime(session.expires_at) > datetime('now')
+      WHERE cs.clerk_organization_id = ?
+      ORDER BY session.created_at DESC
+      LIMIT 1
+    `).bind(organizationId).first<{
+      id: string;
+      created_by_user_id: string | null;
+      status: 'reserved' | 'ready';
+      generation_charge_id: string | null;
+      charge_status: GenerationCharge['status'] | null;
+      charge_expires_at: string | null;
+      session_id: string | null;
+      session_expires_at: string | null;
+      provider_call_limit: number | null;
+      provider_cost_limit_cents: number | null;
+      provider_calls_used: number | null;
+    }>();
+
+    if (existing?.status === 'ready') {
+      return json({
+        authorized: false,
+        error: 'This Crew has already locked its one included stage',
+        code: 'crew_stage_already_claimed',
+      }, 409);
+    }
+    if (
+      existing?.created_by_user_id === user.id
+      && existing.generation_charge_id
+      && existing.charge_status === 'reserved'
+      && existing.session_id
+      && (existing.provider_calls_used ?? 0) === 0
+    ) {
+      return json({
+        authorized: true,
+        mode: 'crew_included',
+        purchaseId: existing.generation_charge_id,
+        stageClaimId: existing.id,
+        creditsCharged: 0,
+        creditsBalance: user.credits_balance,
+        providerSessionId: existing.session_id,
+        providerSessionExpiresAt: existing.session_expires_at,
+        providerCallLimit: existing.provider_call_limit,
+        providerCostLimitCents: existing.provider_cost_limit_cents,
+        reservationExpiresAt: existing.charge_expires_at,
+      });
+    }
+    if (existing) {
+      return json({
+        authorized: false,
+        error: existing.charge_status === 'committed'
+          ? 'Your included Crew stage has already been forged and is waiting to be saved'
+          : 'This Crew stage is already being created',
+        code: existing.charge_status === 'committed'
+          ? 'crew_stage_waiting_for_upload'
+          : 'crew_stage_reserved',
+      }, 409);
+    }
+
+    const purchaseId = generateId();
+    const ledgerId = generateId();
+    const stageClaimId = generateId();
+    const reservationExpiry = reservationExpiresAt();
+    const [claimResult] = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO crew_stages (
+          clerk_organization_id, id, created_by_user_id, status, label,
+          reservation_expires_at
+        )
+        SELECT ?, ?, ?, 'reserved', 'CREW STAGE', ?
+        WHERE NOT EXISTS (
+          SELECT 1 FROM crew_stages WHERE clerk_organization_id = ?
+        )
+        RETURNING id
+      `).bind(organizationId, stageClaimId, user.id, reservationExpiry, organizationId),
+      env.DB.prepare(`
+        INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+        SELECT ?, ?, 0, 'crew_stage_included', NULL
+        WHERE EXISTS (
+          SELECT 1 FROM crew_stages
+          WHERE clerk_organization_id = ? AND id = ? AND status = 'reserved'
+        )
+      `).bind(ledgerId, user.id, organizationId, stageClaimId),
+      env.DB.prepare(`
+        INSERT INTO generation_charges (
+          id, user_id, tier, credit_cost, free_quota_delta, status,
+          reason, fighter_id, ledger_id, expires_at, creation_flow
+        )
+        SELECT ?, user_id, 'rookie', 0, 0, 'reserved',
+               'crew_stage_included', NULL, id, ?, 'original'
+        FROM credit_ledger
+        WHERE id = ? AND user_id = ?
+      `).bind(purchaseId, reservationExpiry, ledgerId, user.id),
+      env.DB.prepare(`
+        UPDATE crew_stages
+        SET generation_charge_id = ?, updated_at = datetime('now')
+        WHERE clerk_organization_id = ? AND id = ? AND status = 'reserved'
+          AND EXISTS (
+            SELECT 1 FROM generation_charges
+            WHERE id = ? AND user_id = ? AND status = 'reserved'
+          )
+      `).bind(purchaseId, organizationId, stageClaimId, purchaseId, user.id),
+    ]);
+    if (!(claimResult.results?.[0] as { id?: string } | undefined)?.id) {
+      return json({
+        authorized: false,
+        error: 'This Crew stage is already being created',
+        code: 'crew_stage_reserved',
+      }, 409);
+    }
+
+    try {
+      const session = await createProviderSession(env, auth, {
+        tier: 'rookie',
+        purpose: 'stage_background',
+        chargeId: purchaseId,
+        legal,
+      });
+      return json({
+        authorized: true,
+        mode: 'crew_included',
+        purchaseId,
+        stageClaimId,
+        creditsCharged: 0,
+        creditsBalance: user.credits_balance,
+        providerSessionId: session.id,
+        providerSessionExpiresAt: session.expiresAt,
+        providerCallLimit: session.providerCallLimit,
+        providerCostLimitCents: session.providerCostLimitCents,
+        reservationExpiresAt: reservationExpiry,
+      });
+    } catch (error) {
+      const charge = await getGenerationCharge(env, user.id, purchaseId);
+      if (charge) await releaseReservedGenerationCharge(env, charge, 'crew_stage_session_failed');
+      throw error;
+    }
+  }
 
   const purchaseId = generateId();
   const ledgerId = generateId();
@@ -1770,6 +1944,24 @@ export async function settleGenerationPurchase(
   } else if (charge.status === 'reserved') {
     await releaseReservedGenerationCharge(env, charge);
     charge = (await getGenerationCharge(env, userId, purchaseId)) ?? charge;
+  } else if (charge.reason === 'crew_stage_included') {
+    const providerEvents = await env.DB.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN outcome = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
+             SUM(CASE WHEN outcome = 'reserved' THEN 1 ELSE 0 END) AS pending
+      FROM provider_cost_events
+      WHERE charge_id = ?
+    `).bind(charge.id).first<{ total: number; succeeded: number; pending: number }>();
+    if (
+      Number(providerEvents?.total ?? 0) > 0
+      && Number(providerEvents?.succeeded ?? 0) === 0
+      && Number(providerEvents?.pending ?? 0) === 0
+    ) {
+      await env.DB.prepare(`
+        DELETE FROM crew_stages
+        WHERE generation_charge_id = ? AND status = 'reserved'
+      `).bind(charge.id).run();
+    }
   }
   if (!success && (charge.status === 'refunded' || charge.status === 'committed')) {
     await markProviderSessionsForCharge(env, userId, charge.id, 'cancelled');

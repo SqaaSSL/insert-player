@@ -12,6 +12,7 @@ const baseProps = {
   onCreateCrew: vi.fn(async (name: string) => ({ id: 'org_crew', name, slug: 'crew' })),
   onSelectCrew: vi.fn(async () => {}),
   onCreateFighter: vi.fn(),
+  onCreateStage: vi.fn(),
   onComplete: vi.fn(),
 };
 
@@ -20,16 +21,25 @@ describe('Crew onboarding presentation', () => {
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: false,
+      crewStageReady: false,
       invitationSent: false,
     })).toBe('complete');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
+      crewStageReady: false,
       invitationSent: false,
     })).toBe('invite');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
+      crewStageReady: true,
+      invitationSent: false,
+    })).toBe('invite');
+    expect(resolveCrewMissionStep({
+      shared: true,
+      canInviteCrew: true,
+      crewStageReady: true,
       invitationSent: true,
     })).toBe('complete');
   });
@@ -45,6 +55,7 @@ describe('Crew onboarding presentation', () => {
     expect(markup).toContain('3 · Aura debut');
     expect(markup).toContain('4 · Build a Crew');
     expect(markup).toContain('5 · Invite Player Two');
+    expect(markup).toContain('6 · Choose a home stage');
     expect(markup).toContain('Create Crew &amp; Share Rookie');
     expect(markup).not.toContain('Change branding');
   });
@@ -75,6 +86,21 @@ describe('Crew onboarding presentation', () => {
 
     expect(markup).toContain('Save Your Crew');
     expect(markup).toContain('Sign In To Continue');
-    expect(markup).toContain('Create a Crew · Share your Rookie · Invite one friend');
+    expect(markup).toContain('Create a Crew · Invite Player Two · Choose one shared stage together');
+  });
+
+  it('presents the one-per-Crew stage after inviting the players who should decide it', () => {
+    expect(resolveCrewMissionStep({
+      shared: true,
+      canInviteCrew: true,
+      crewStageReady: false,
+      invitationSent: true,
+    })).toBe('stage');
+    expect(resolveCrewMissionStep({
+      shared: true,
+      canInviteCrew: true,
+      crewStageReady: true,
+      invitationSent: false,
+    })).toBe('invite');
   });
 });

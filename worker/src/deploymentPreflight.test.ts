@@ -33,6 +33,7 @@ describe('deployment image processor preflight', () => {
       const response = await readDeploymentImageProcessorContract(request(bridge), env);
       expect(response.status).toBe(401);
       expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+      expect(await response.json()).toEqual({ error: 'Unauthorized' });
       expect(arcadeGeneration.readImageProcessorGenerationContract).not.toHaveBeenCalled();
     },
   );
@@ -44,6 +45,36 @@ describe('deployment image processor preflight', () => {
     expect(response.headers.get('Cache-Control')).toBe('private, no-store');
     expect(await response.json()).toEqual({ ready: true });
     expect(arcadeGeneration.readImageProcessorGenerationContract).toHaveBeenCalledOnce();
-    expect(arcadeGeneration.readImageProcessorGenerationContract).toHaveBeenCalledWith(env);
+    expect(arcadeGeneration.readImageProcessorGenerationContract).toHaveBeenCalledWith(env, {
+      includeDeploymentDiagnostics: true,
+    });
+  });
+
+  it('does not let a diagnostic request bypass machine authentication', async () => {
+    const diagnosticRequest = new Request(`${request().url}?includeDeploymentDiagnostics=true`, {
+      headers: { 'X-Include-Deployment-Diagnostics': 'true' },
+    });
+    const response = await readDeploymentImageProcessorContract(diagnosticRequest, env);
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: 'Unauthorized' });
+    expect(arcadeGeneration.readImageProcessorGenerationContract).not.toHaveBeenCalled();
+  });
+
+  it('returns bounded mismatch diagnostics only after valid machine authentication without caching', async () => {
+    const body = {
+      error: 'Image processor Template Atlas compiler is incompatible',
+      reason: 'processor_template_atlas_compiler_incompatible',
+      diagnostics: { templateAtlasCompiler: {
+        present: true, missingFields: [], mismatchedFields: ['processingVersion'],
+      } },
+    };
+    arcadeGeneration.readImageProcessorGenerationContract.mockResolvedValue(Response.json(body, { status: 503 }));
+    const response = await readDeploymentImageProcessorContract(request(BRIDGE_SECRET), env);
+    expect(response.status).toBe(503);
+    expect(response.headers.get('Cache-Control')).toBe('private, no-store');
+    expect(await response.json()).toEqual(body);
+    expect(arcadeGeneration.readImageProcessorGenerationContract).toHaveBeenCalledWith(env, {
+      includeDeploymentDiagnostics: true,
+    });
   });
 });

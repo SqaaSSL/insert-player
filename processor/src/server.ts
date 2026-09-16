@@ -1,5 +1,6 @@
 import { assertPackageAnimationFrameCount } from '../../src/services/GenerationPackages';
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { installGracefulShutdown } from './gracefulShutdown';
 import { installCanvasRuntime } from './canvasRuntime';
 import { processorErrorResponse } from './providerErrorResponse';
 import { sourceGenerationStrategy } from './sourceGenerationPolicy';
@@ -219,7 +220,7 @@ function sendJson(response: import('node:http').ServerResponse, status: number, 
   response.end(JSON.stringify(body));
 }
 
-const server = createServer(async (request, response) => {
+async function handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
   try {
     if (request.method === 'GET' && request.url === '/health') {
       sendJson(response, 200, {
@@ -349,6 +350,17 @@ const server = createServer(async (request, response) => {
     const failure = processorErrorResponse(error);
     sendJson(response, failure.status, failure.body);
   }
+}
+
+const activeRequests = new Set<Promise<void>>();
+const server = createServer((request, response) => {
+  const pending = handleRequest(request, response);
+  activeRequests.add(pending);
+  void pending.then(() => activeRequests.delete(pending), () => activeRequests.delete(pending));
+});
+
+installGracefulShutdown(server, {
+  waitForRequests: async () => { await Promise.allSettled(activeRequests); },
 });
 
 server.listen(port, '0.0.0.0', () => {

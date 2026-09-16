@@ -14,6 +14,11 @@ import {
   type PhotoStageCreationResult,
 } from '../../services/StageBackgroundService.ts';
 import type { CachedStageBackground } from '../../services/SpriteCache.ts';
+import {
+  findPendingCrewStageUpload,
+  resumePendingCrewStageUpload,
+  type CrewStageIdentity,
+} from '../../services/CrewStages.ts';
 import { STAGE_FORGE_CREDIT_COST } from '../../shared/StageForgePricing.ts';
 import { Button } from '../components/Button.tsx';
 import { ConfirmDialog, Modal } from '../components/Modal.tsx';
@@ -25,10 +30,11 @@ const BENIDORM_CENTER: google.maps.LatLngLiteral = { lat: 38.5411, lng: -0.1225 
 interface StageScoutPageProps {
   onBack: () => void;
   onComplete: () => void;
+  crew?: CrewStageIdentity | null;
 }
 
 type ScoutView = 'map' | 'street-view';
-type BusyAction = 'capture' | 'forge' | 'direct' | null;
+type BusyAction = 'capture' | 'forge' | 'direct' | 'recover' | null;
 
 interface PanoramaMetadata {
   panoId: string;
@@ -44,7 +50,7 @@ interface StageCreationSuccess {
   billingMode: PhotoStageCreationResult['billingMode'] | 'free';
 }
 
-export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
+export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPageProps) {
   const mapsConfigured = hasGoogleMapsBrowserKey();
   const mapElementRef = useRef<HTMLDivElement | null>(null);
   const panoramaElementRef = useRef<HTMLDivElement | null>(null);
@@ -61,7 +67,11 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
   const [query, setQuery] = useState('Benidorm, Spain');
   const [locationLabel, setLocationLabel] = useState('Benidorm, Spain');
   const [stageName, setStageName] = useState('BENIDORM');
-  const [status, setStatus] = useState('Loading Google Maps and Street View coverage...');
+  const [status, setStatus] = useState(
+    crew
+      ? `Loading the map for ${crew.name}'s one included Crew stage...`
+      : 'Loading Google Maps and Street View coverage...',
+  );
   const [mapReady, setMapReady] = useState(false);
   const [mapsAuthFailed, setMapsAuthFailed] = useState(false);
   const [hasPanorama, setHasPanorama] = useState(false);
@@ -70,11 +80,63 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
   const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
   const [capturedFrame, setCapturedFrame] = useState<StreetViewCaptureFrame | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction>(null);
-  const [forgeConfirmationOpen, setForgeConfirmationOpen] = useState(false);
+  const [confirmationMode, setConfirmationMode] = useState<'forge' | 'direct' | null>(null);
   const [forgeError, setForgeError] = useState<string | null>(null);
+  const [pendingCrewStage, setPendingCrewStage] = useState<CachedStageBackground | null>(null);
+  const [crewStageRecoveryAttempt, setCrewStageRecoveryAttempt] = useState(0);
+  const [crewStageRecoveryError, setCrewStageRecoveryError] = useState<string | null>(null);
   const [creationSuccess, setCreationSuccess] = useState<StageCreationSuccess | null>(null);
   const capturedUrl = useObjectUrl(capturedBlob);
   const createdStageUrl = useObjectUrl(creationSuccess?.stage.pngBlob ?? null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPendingCrewStage(null);
+    setCrewStageRecoveryError(null);
+    if (!crew) return () => { cancelled = true; };
+    void findPendingCrewStageUpload(crew).then((pending) => {
+      if (!cancelled) setPendingCrewStage(pending);
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setCrewStageRecoveryError(
+          error instanceof Error ? error.message : 'The pending Crew stage could not be checked.',
+        );
+      }
+    });
+    return () => { cancelled = true; };
+  }, [crew?.id]);
+
+  useEffect(() => {
+    if (!crew || !pendingCrewStage) return;
+    let cancelled = false;
+    setBusyAction('recover');
+    setCrewStageRecoveryError(null);
+    void resumePendingCrewStageUpload(pendingCrewStage, crew).then((stage) => {
+      if (cancelled) return;
+      setPendingCrewStage(null);
+      if (!stage) {
+        setStatus('The earlier forge did not start. Choose and create the Crew stage again.');
+        return;
+      }
+      setCreationSuccess({
+        stage,
+        mode: 'forge',
+        creditsCharged: 0,
+        billingMode: 'crew_included',
+      });
+      setStatus(`${crew.name}'s generated home stage is saved and ready for every member.`);
+    }).catch((error: unknown) => {
+      if (cancelled) return;
+      setCrewStageRecoveryError(
+        error instanceof Error
+          ? error.message
+          : 'Your generated Crew stage is safe here, but could not finish uploading.',
+      );
+    }).finally(() => {
+      if (!cancelled) setBusyAction(null);
+    });
+    return () => { cancelled = true; };
+  }, [crew?.id, crew?.name, crewStageRecoveryAttempt, pendingCrewStage]);
 
   const setResolvedLocation = useCallback((label: string) => {
     const normalized = label.replace(/\s+/g, ' ').trim() || 'Street View location';
@@ -343,7 +405,7 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
     try {
       const source = streetViewStageSource(capturedFrame);
       if (mode === 'forge') {
-        const result = await createPhotoStage(capturedBlob, stageName, source);
+        const result = await createPhotoStage(capturedBlob, stageName, source, { crew });
         setCreationSuccess({
           stage: result.stage,
           mode,
@@ -352,20 +414,22 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
           billingMode: result.billingMode,
         });
       } else {
-        const stage = await createDirectPhotoStage(capturedBlob, stageName, source);
+        const stage = await createDirectPhotoStage(capturedBlob, stageName, source, { crew });
         setCreationSuccess({
           stage,
           mode,
           creditsCharged: 0,
-          billingMode: 'free',
+          billingMode: crew ? 'crew_included' : 'free',
         });
       }
-      setForgeConfirmationOpen(false);
-      setStatus('Stage saved. Choose what to do next.');
+      setConfirmationMode(null);
+      setStatus(crew
+        ? `${crew.name}'s home stage is locked and ready for every member.`
+        : 'Stage saved. Choose what to do next.');
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'The stage could not be created.';
       setStatus(message);
-      if (mode === 'forge') setForgeError(message);
+      setForgeError(message);
     } finally {
       setBusyAction(null);
     }
@@ -399,9 +463,13 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
     <main className="stage-scout">
       <header className="stage-scout__header">
         <div>
-          <span className="stage-scout__eyebrow">Real World Arena Builder</span>
-          <h1>Stage Scout</h1>
-          <p>Search any place, step into Street View, and lock the exact angle for your next arena.</p>
+          <span className="stage-scout__eyebrow">
+            {crew ? 'Crew Home Stage · One Included' : 'Real World Arena Builder'}
+          </span>
+          <h1>{crew ? `Choose ${crew.name}'s Stage` : 'Stage Scout'}</h1>
+          <p>{crew
+            ? 'Your Crew can lock one shared stage. Decide together before choosing the bar, park, pitch, or corner you call home. If someone else should vote, invite them first.'
+            : 'Search any place, step into Street View, and lock the exact angle for your next arena.'}</p>
         </div>
         <Button onClick={onBack} disabled={working}>Back</Button>
       </header>
@@ -488,16 +556,27 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
         <div className="stage-scout__capture-copy">
           <span className="stage-scout__location">{locationLabel}</span>
           <strong>{frameSummary}</strong>
-          <span role="status" aria-live="polite">{status}</span>
+          <span role="status" aria-live="polite">{crewStageRecoveryError ?? status}</span>
         </div>
-        <Button
-          variant="primary"
-          size="lg"
-          disabled={!liveFrame || working}
-          onClick={() => void captureCurrentView()}
-        >
-          {busyAction === 'capture' ? 'Capturing...' : capturedBlob ? 'Recapture View' : 'Capture This View'}
-        </Button>
+        {pendingCrewStage ? (
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={working}
+            onClick={() => setCrewStageRecoveryAttempt((attempt) => attempt + 1)}
+          >
+            {busyAction === 'recover' ? 'Finishing Upload...' : 'Finish Saving Crew Stage'}
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            size="lg"
+            disabled={!liveFrame || working}
+            onClick={() => void captureCurrentView()}
+          >
+            {busyAction === 'capture' ? 'Capturing...' : capturedBlob ? 'Recapture View' : 'Capture This View'}
+          </Button>
+        )}
       </section>
 
       {capturedBlob && capturedFrame ? (
@@ -518,7 +597,9 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
                 setStageName(event.target.value);
               }}
             />
-            <p>Forge Stage creates custom AI artwork for 1 credit. Use Photo keeps the captured view and is free.</p>
+            <p>{crew
+              ? 'One stage is included for the whole Crew—not per player. Once saved, this shared slot is used.'
+              : 'Forge Stage creates custom AI artwork for 1 credit. Use Photo keeps the captured view and is free.'}</p>
             <div className="stage-scout__forge-actions">
               <Button
                 variant="primary"
@@ -526,40 +607,58 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
                 disabled={working || !stageName.trim()}
                 onClick={() => {
                   setForgeError(null);
-                  setForgeConfirmationOpen(true);
+                  setConfirmationMode('forge');
                 }}
               >
-                {busyAction === 'forge' ? 'Forging...' : `Forge Stage · ${STAGE_FORGE_CREDIT_COST} Credit`}
+                {busyAction === 'forge'
+                  ? 'Forging...'
+                  : crew
+                    ? 'Forge Crew Stage · Included'
+                    : `Forge Stage · ${STAGE_FORGE_CREDIT_COST} Credit`}
               </Button>
               <Button
                 size="lg"
                 disabled={working || !stageName.trim()}
-                onClick={() => void createStage('direct')}
+                onClick={() => crew ? setConfirmationMode('direct') : void createStage('direct')}
               >
-                {busyAction === 'direct' ? 'Preparing...' : 'Use Photo · Free'}
+                {busyAction === 'direct'
+                  ? 'Preparing...'
+                  : crew
+                    ? 'Use Photo For Crew'
+                    : 'Use Photo · Free'}
               </Button>
             </div>
           </div>
         </section>
       ) : null}
 
-      {forgeConfirmationOpen ? (
+      {confirmationMode ? (
         <ConfirmDialog
-          title="Forge this stage?"
-          confirmLabel={`Spend ${STAGE_FORGE_CREDIT_COST} Credit`}
+          title={crew ? 'Lock this as your Crew stage?' : 'Forge this stage?'}
+          confirmLabel={crew
+            ? confirmationMode === 'forge' ? 'Forge Included Stage' : 'Lock Crew Stage'
+            : `Spend ${STAGE_FORGE_CREDIT_COST} Credit`}
           cancelLabel="Keep Framing"
-          onConfirm={() => void createStage('forge')}
+          onConfirm={() => void createStage(confirmationMode)}
           onCancel={() => {
             setForgeError(null);
-            setForgeConfirmationOpen(false);
+            setConfirmationMode(null);
           }}
-          busy={busyAction === 'forge'}
+          busy={busyAction === confirmationMode}
         >
-          <p>
-            Stage Forge will turn this Street View frame into custom fighting-game artwork.
-            {' '}{STAGE_FORGE_CREDIT_COST} credit is reserved now and consumed when AI generation starts.
-            If generation cannot start, it is released automatically.
-          </p>
+          {crew ? (
+            <p>
+              {crew.name} gets exactly one included shared stage. Every member will be able to use it,
+              and choosing it now permanently uses the Crew's included slot. Make sure the Crew agrees on this place;
+              if anyone else should have a say, go back and invite them first.
+            </p>
+          ) : (
+            <p>
+              Stage Forge will turn this Street View frame into custom fighting-game artwork.
+              {' '}{STAGE_FORGE_CREDIT_COST} credit is reserved now and consumed when AI generation starts.
+              If generation cannot start, it is released automatically.
+            </p>
+          )}
           {forgeError ? <StatusMessage severity="error">{forgeError}</StatusMessage> : null}
         </ConfirmDialog>
       ) : null}
@@ -574,10 +673,14 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
           ) : null}
           <div className="stage-scout__success-copy">
             <strong>{creationSuccess.stage.label}</strong>
-            <p>Your stage is saved in Gallery and ready for a fight.</p>
+            <p>{crew
+              ? `${crew.name}'s one shared stage is saved and ready for every Crew member.`
+              : 'Your stage is saved in Gallery and ready for a fight.'}</p>
             <div className="stage-scout__success-receipt" aria-label="Stage creation receipt">
               <span>
-                {creationSuccess.billingMode === 'cache'
+                {creationSuccess.billingMode === 'crew_included'
+                  ? 'Crew stage included · 0 credits used'
+                  : creationSuccess.billingMode === 'cache'
                   ? 'Already forged · 0 credits used'
                   : creationSuccess.billingMode === 'local'
                     ? 'Local preview · 0 cloud credits used'
@@ -591,8 +694,10 @@ export function StageScoutPage({ onBack, onComplete }: StageScoutPageProps) {
             </div>
           </div>
           <div className="asf-modal__actions">
-            <Button onClick={keepScouting}>Keep Scouting</Button>
-            <Button variant="primary" onClick={onComplete}>View in Gallery</Button>
+            {!crew ? <Button onClick={keepScouting}>Keep Scouting</Button> : null}
+            <Button variant="primary" onClick={onComplete}>
+              {crew ? 'Continue Crew Mission' : 'View in Gallery'}
+            </Button>
           </div>
         </Modal>
       ) : null}
