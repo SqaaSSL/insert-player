@@ -1,3 +1,5 @@
+import type { AuraSelectedRoutines } from './AuraChoreography.ts';
+
 /** Presentation time only. The song, chart and recorded judgements still start at zero. */
 export const AURA_STARTUP_EVENT = 'asf:aura-startup';
 export const AURA_STARTUP_READY_EVENT = 'asf:aura-startup-ready';
@@ -12,6 +14,14 @@ export interface AuraStartupDetail {
   /** Canvas instrument and native touch controls share the same reveal frame. */
   instrumentVisible?: boolean;
   count: number | null;
+}
+
+export interface AuraStartupReadyDetail {
+  token: number;
+  seed: number;
+  practice?: boolean;
+  /** Optional customization is committed together with the real Start gesture. */
+  auraRoutines?: AuraSelectedRoutines;
 }
 
 export interface AuraMusicalLeadIn {
@@ -124,6 +134,6 @@ export function waitForAuraRenderedFrames(events: RenderEvents, signal: AbortSig
 declare global {
   interface WindowEventMap {
     [AURA_STARTUP_EVENT]: CustomEvent<AuraStartupDetail>;
-    [AURA_STARTUP_READY_EVENT]: CustomEvent<{ token: number; seed: number; practice?: boolean }>;
+    [AURA_STARTUP_READY_EVENT]: CustomEvent<AuraStartupReadyDetail>;
   }
 }

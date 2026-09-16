@@ -63,7 +63,7 @@ import {
   auraPerformanceAtBeat,
   type AuraRoutineAnimationName,
 } from '../aura/AuraPerformance.ts';
-import { isAuraMatchSelection, normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine, type AuraMatchSelection } from '../aura/AuraChoreography.ts';
+import { isAuraMatchSelection, isAuraSelectedRoutines, normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine, type AuraMatchSelection } from '../aura/AuraChoreography.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 import { AuraComicFeedback } from '../aura/AuraComicFeedback.ts';
 import { AuraScoreFeedback } from '../aura/AuraScoreFeedback.ts';
@@ -738,6 +738,7 @@ export class AuraScene extends Phaser.Scene {
   private awaitStartupGesture(): void {
     this.awaitingStartInput = true;
     this.startupView?.render(this.layout, null);
+    this.emitRematchConfig();
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed,
         phase: 'awaiting-input', remainingMs: 0, count: null },
@@ -746,7 +747,21 @@ export class AuraScene extends Phaser.Scene {
 
   private readonly onStartupReady = (event: WindowEventMap[typeof AURA_STARTUP_READY_EVENT]): void => {
     if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || !this.awaitingStartInput
-      || this.paused || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
+      || this.paused || this.opponentLeft || this.localOnlineReady || this.clockStartedAt !== null
+      || this.scheduledClockStart !== null || this.matchFinished || this.finalizing || this.actionCommitted
+      || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
+    if (event.detail.auraRoutines !== undefined) {
+      if (this.cpuVsCpu || this.matchData.auraChallenge || !isAuraSelectedRoutines(event.detail.auraRoutines)) return;
+      const selected = normalizeAuraSelectedRoutines(event.detail.auraRoutines);
+      const current = normalizeAuraSelectedRoutines(this.matchData.auraRoutines);
+      // The peer's own ready packet is authoritative for its slot, even if it
+      // arrived while the local player was editing an older UI snapshot.
+      const routines = this.online
+        ? this.online.localSlot === 0 ? [selected[0], current[1]] as const : [current[0], selected[1]] as const
+        : selected;
+      this.actionRecorder?.setRoutines(routines);
+      this.matchData.auraRoutines = routines;
+    }
     this.awaitingStartInput = false;
     if (typeof event.detail.practice === 'boolean') {
       this.onboardingRequested = event.detail.practice && canGuideAuraFirstBattle(this.matchData);
@@ -766,6 +781,18 @@ export class AuraScene extends Phaser.Scene {
       else void this.prepareStartup();
     });
   };
+
+  private emitRematchConfig(): void {
+    window.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: {
+      ...this.matchData,
+      gameMode: 'aura', vsAI: this.isVsAI, cpuVsCpu: this.cpuVsCpu,
+      p1Name: this.p1Name, p2Name: this.p2Name,
+      seed: this.matchSeed, auraTrackId: this.track.id,
+      auraDifficulty: this.difficultyId, stageId: this.resolvedStageId,
+      auraRoutines: normalizeAuraSelectedRoutines(this.matchData.auraRoutines),
+      ...(this.online ? { online: { ...this.online } } : {}),
+    } satisfies MatchSceneData }));
+  }
 
   private startOnboarding(): void {
     this.startupView?.render(this.layout, null);
@@ -2451,12 +2478,7 @@ export class AuraScene extends Phaser.Scene {
     this.fitHudText();
     this.soundManager.playAnnounce('wins');
     this.soundManager.peakAuraCrowd();
-    if (!this.online) window.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: {
-      ...this.matchData,
-      gameMode: 'aura', vsAI: this.isVsAI, cpuVsCpu: this.cpuVsCpu,
-      seed: this.matchSeed, auraTrackId: this.track.id,
-      auraDifficulty: this.difficultyId, stageId: this.resolvedStageId,
-    } satisfies MatchSceneData }));
+    if (!this.online) this.emitRematchConfig();
     window.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: summary }));
     try {
       this.actionRecorder?.finish(summary);

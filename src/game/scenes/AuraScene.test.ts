@@ -1962,6 +1962,8 @@ describe('AuraScene visible presentation handshake', () => {
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
+      clockStartedAt: null, scheduledClockStart: null,
+      track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID,
       startupView: { render: vi.fn() },
       beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
       soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
@@ -2126,6 +2128,149 @@ describe('AuraScene visible presentation handshake', () => {
     expect(scene.emitPresentationTurn).not.toHaveBeenCalled();
   });
 
+  function customizationHarness() {
+    const scene = handshakeHarness();
+    const chart = createAuraChart(67, 'viral');
+    Object.assign(scene, {
+      matchData: { gameMode: 'aura', auraRoutines: [P2_CHOREOGRAPHY, null] },
+      chart,
+      actionRecorder: new AuraRecorder({ engineVersion: 'test', matchSeed: 67,
+        difficulty: 'viral', trackId: chart.trackId, stageId: DEFAULT_AURA_STAGE_ID,
+        p1Name: 'P1', p2Name: 'P2', chart, auraRoutines: [P2_CHOREOGRAPHY, null] }),
+    });
+    scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
+    return scene;
+  }
+
+  it.each([false, true])('commits both offline selections before media unlock and clones all nine positions, vsAI=%s', async vsAI => {
+    const scene = customizationHarness();
+    scene.isVsAI = vsAI;
+    const selected = [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY].map(match => match.map(round => [...round]));
+    scene.soundManager.unlockPreparedMedia.mockImplementation(() => {
+      expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+      expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(scene.matchData.auraRoutines);
+      expect(scene.actionRecorder.toRecording().events).toEqual([]);
+      return Promise.resolve(true);
+    });
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: selected } });
+    selected[0][2][1] = 'aura_one_leg';
+    selected[1][0][0] = 'aura_floor_worm';
+    expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    await Promise.resolve();
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, [null, null]])('keeps optional customization compatible with predefined routines: %o', auraRoutines => {
+    const scene = customizationHarness();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines } });
+    const expected = auraRoutines === undefined ? [P2_CHOREOGRAPHY, null] : [null, null];
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(expected);
+    expect(scene.soundManager.unlockPreparedMedia).toHaveBeenCalledOnce();
+  });
+
+  it.each([0, 1] as const)('commits only local seat %i after the peer becomes ready during customization', localSlot => {
+    const scene = customizationHarness();
+    Object.assign(scene, {
+      online: { localSlot, matchSerial: 3 },
+      onlineSession: { seat: localSlot === 0 ? 'host' : 'guest', transport: { sendControl: vi.fn(() => true) } },
+      remoteOnlineReady: false,
+    });
+    delete scene.announceOnlineReady;
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3, routine: P2_CHOREOGRAPHY });
+    expect(scene.remoteOnlineReady).toBe(true);
+    expect(scene.localOnlineReady).toBe(false);
+    expect(scene.onlineSession.transport.sendControl).not.toHaveBeenCalled();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, P1_CHOREOGRAPHY] } });
+    const expected = localSlot === 0 ? [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] : [P2_CHOREOGRAPHY, P1_CHOREOGRAPHY];
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(expected);
+    expect(scene.onlineSession.transport.sendControl).not.toHaveBeenCalled();
+    scene.localOnlineReady = true; // Only the completed intro may advertise readiness.
+    scene.announceOnlineReady();
+    expect(scene.onlineSession.transport.sendControl).toHaveBeenCalledWith({
+      t: 'aura_ready', matchSerial: 3, routine: P1_CHOREOGRAPHY,
+    });
+  });
+
+  it.each([
+    { label: 'stale token', state: {}, detail: { token: 40 } },
+    { label: 'stale seed', state: {}, detail: { seed: 68 } },
+    { label: 'paused', state: { paused: true } },
+    { label: 'opponent departed', state: { opponentLeft: true } },
+    { label: 'already ready online', state: { localOnlineReady: true } },
+    { label: 'scheduled clock', state: { scheduledClockStart: 1500 } },
+    { label: 'running clock', state: { clockStartedAt: 0 } },
+    { label: 'completed match', state: { matchFinished: true } },
+    { label: 'finalizing match', state: { finalizing: true } },
+    { label: 'leaving match', state: { actionCommitted: true } },
+    { label: 'already preparing', state: { awaitingStartInput: false } },
+    { label: 'spectator', state: { cpuVsCpu: true } },
+    { label: 'saved challenge', state: { matchData: { auraChallenge: {} } } },
+    { label: 'missing player slot', state: {}, detail: { auraRoutines: [P1_CHOREOGRAPHY] } },
+    { label: 'old flat selection', state: {}, detail: { auraRoutines: [P1_CHOREOGRAPHY[0], null] } },
+    { label: 'invalid other slot', state: { online: { localSlot: 0 } }, detail: { auraRoutines: [P1_CHOREOGRAPHY, []] } },
+    { label: 'null payload', state: {}, detail: { auraRoutines: null } },
+  ])('rejects $label before changing choreography, recording or startup', ({ state, detail }) => {
+    const scene = Object.assign(customizationHarness(), state);
+    const previous = structuredClone(scene.matchData);
+    const recording = scene.actionRecorder.toRecording();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, null], ...detail } });
+    expect(scene.matchData).toEqual(previous);
+    expect(scene.actionRecorder.toRecording()).toEqual(recording);
+    expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
+    expect(scene.prepareStartup).not.toHaveBeenCalled();
+  });
+
+  it('allows the normal Start gesture for a saved challenge without optional changes', () => {
+    const scene = customizationHarness();
+    scene.matchData.auraChallenge = {};
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    expect(scene.matchData.auraRoutines).toEqual([P2_CHOREOGRAPHY, null]);
+    expect(scene.soundManager.unlockPreparedMedia).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('publishes current match configuration before awaiting input, online=%s', online => {
+    const scene = handshakeHarness();
+    const dispatchEvent = vi.mocked(window.dispatchEvent);
+    Object.assign(scene, {
+      p1Name: 'Current player', p2Name: 'Current rival', matchSeed: 987,
+      matchData: { gameMode: 'aura', seed: 12, p1Name: 'Old player', p2Name: 'Old rival',
+        p1PhotoHash: 'retained-local-photo', auraRoutines: [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] },
+      online: online ? { localSlot: 1, matchSerial: 4 } : null,
+    });
+    scene.awaitStartupGesture();
+    const [configEvent, startupEvent] = dispatchEvent.mock.calls.slice(-2).map(([event]) => event as CustomEvent);
+    expect(configEvent.type).toBe(AURA_REMATCH_CONFIG_EVENT);
+    expect(configEvent.detail).toMatchObject({ gameMode: 'aura', seed: 987,
+      p1Name: 'Current player', p2Name: 'Current rival', p1PhotoHash: 'retained-local-photo',
+      auraTrackId: DEFAULT_AURA_TRACK.id, auraDifficulty: 'viral', stageId: DEFAULT_AURA_STAGE_ID,
+      auraRoutines: [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] });
+    expect(configEvent.detail.online).toEqual(scene.online ?? undefined);
+    expect(startupEvent.type).toBe(AURA_STARTUP_EVENT);
+    expect(startupEvent.detail).toMatchObject({ seed: 987, phase: 'awaiting-input' });
+    configEvent.detail.auraRoutines[0][1][0] = 'aura_floor_worm';
+    expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    if (online) {
+      configEvent.detail.online.matchSerial = 999;
+      expect(scene.online.matchSerial).toBe(4);
+    }
+  });
+
+  it('publishes applied selections again if blocked audio asks for another Start gesture', async () => {
+    const scene = customizationHarness();
+    scene.soundManager.unlockPreparedMedia.mockResolvedValue(false);
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, null] } });
+    await Promise.resolve();
+    expect(scene.awaitingStartInput).toBe(true);
+    const events = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent);
+    expect(events.at(-2)?.type).toBe(AURA_REMATCH_CONFIG_EVENT);
+    expect(events.at(-2)?.detail.auraRoutines).toEqual([P1_CHOREOGRAPHY, null]);
+    expect(events.at(-1)?.detail.phase).toBe('awaiting-input');
+    expect(scene.prepareStartup).not.toHaveBeenCalled();
+  });
+
   it.each([0, 1])('does not advertise online readiness before the real Ready gesture and intro, for player %i', localSlot => {
     const scene = Object.assign(handshakeHarness(), { online: { localSlot, matchSerial: 3 } });
     scene.onPresentationStart({ detail: { token: 40, seed: 67 } });
@@ -2261,6 +2406,11 @@ describe('AuraScene asynchronous challenge ownership', () => {
     expect(retry.auraRoutines).toEqual(auraRoutines);
     scene.init(retry);
     expect(scene.localControlledSlot()).toBe(1);
+    Object.assign(scene, { track: { id: retry.auraTrackId }, resolvedStageId: retry.stageId });
+    scene.awaitStartupGesture();
+    expect(dispatchEvent.mock.calls.at(-2)![0].detail).toMatchObject({
+      seed: 987, auraTrackId: 'neon-arena', p2Name: 'Recipient', auraChallenge: challenge, auraRoutines,
+    });
     scene.performAction('remix');
     const remix = restart.mock.calls[1][0];
     expect(remix.auraChallenge).toBeUndefined(); expect(remix.seed).not.toBe(987);
@@ -2270,6 +2420,12 @@ describe('AuraScene asynchronous challenge ownership', () => {
     scene.init(remix);
     expect(scene.isCpuSlot(0)).toBe(false); expect(scene.isCpuSlot(1)).toBe(true);
     expect(scene.localControlledSlot()).toBe(0);
+    Object.assign(scene, { track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID });
+    scene.awaitStartupGesture();
+    const remixConfig = dispatchEvent.mock.calls.at(-2)![0].detail;
+    expect(remixConfig).toMatchObject({ seed: remix.seed, p1Name: 'Recipient', p2Name: 'BYTE',
+      auraTrackId: DEFAULT_AURA_TRACK.id, auraRoutines: [auraRoutines[1], auraRoutines[0]] });
+    expect(remixConfig.auraChallenge).toBeUndefined();
     const slots = dispatchEvent.mock.calls.map(([event]) => event).filter(event => event.type === AURA_PRESENTATION_EVENT)
       .map(event => event.detail.localControlledSlot);
     expect(slots).toEqual([1, 1, 0]);
@@ -2286,6 +2442,7 @@ describe('AuraScene first-play practice isolation', () => {
       lifecycleActive: true, presentationReady: true, presentationStarted: true,
       presentationToken: 41, matchSeed: 67, isVsAI: true, cpuVsCpu: false, online: null,
       matchData: { gameMode: 'aura', vsAI: true },
+      track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID,
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
       lastOnboardingState: null, phaseText: controlText(), turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),
