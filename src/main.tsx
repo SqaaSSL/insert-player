@@ -97,8 +97,9 @@ function ClerkSessionBridge() {
     if (!organizationList.isLoaded || !organizationList.setActive) {
       throw new Error('Crew setup is still loading. Try again in a moment.');
     }
+    await organizationList.userMemberships.revalidate();
     await organizationList.setActive({ organization: organizationId });
-  }, [organizationList.isLoaded, organizationList.setActive]);
+  }, [organizationList.isLoaded, organizationList.setActive, organizationList.userMemberships]);
 
   useEffect(() => {
     configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null);

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  createCrewInviteLink,
   loadOnboardingStatus,
-  sendCrewInvitation,
   shareFighterWithActiveCrew,
+  type CrewInviteLink,
   type OnboardingStatus,
 } from '../../services/Crews.ts';
 import { listCloudFighters } from '../../services/CloudFighters.ts';
@@ -34,19 +35,44 @@ export function resolveCrewMissionStep({
   shared,
   canInviteCrew,
   crewStageReady,
-  invitationSent,
+  invitationAccepted,
   serverComplete = false,
 }: {
   shared: boolean;
   canInviteCrew: boolean;
   crewStageReady: boolean;
-  invitationSent: boolean;
+  invitationAccepted: boolean;
   serverComplete?: boolean;
 }): MissionStep {
   if (!shared) return 'crew';
   if (!canInviteCrew || serverComplete) return 'complete';
-  if (!invitationSent) return 'invite';
+  if (!invitationAccepted) return 'invite';
   return crewStageReady ? 'complete' : 'stage';
+}
+
+export function buildWhatsAppInviteUrl(inviteUrl: string, crewName: string): string {
+  const message = [
+    `PLAYER TWO WANTED — Join my Crew${crewName ? ` ${crewName}` : ''} in Insert Player.`,
+    'Build your free Rookie and help choose our home stage:',
+    inviteUrl,
+  ].join('\n');
+  return `https://wa.me/?text=${encodeURIComponent(message)}`;
+}
+
+async function copyInviteUrl(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = value;
+  textarea.setAttribute('readonly', '');
+  textarea.className = 'product-entry__copy-target';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('Copy is unavailable in this browser.');
 }
 
 function suggestedCrewName(playerName: string): string {
@@ -75,8 +101,9 @@ export function CrewOnboardingPage({
   const [crewStageReady, setCrewStageReady] = useState(false);
   const [crewStageState, setCrewStageState] = useState<OnboardingStatus['crewStageState']>('unavailable');
   const [invitationSent, setInvitationSent] = useState(false);
+  const [invitationAccepted, setInvitationAccepted] = useState(false);
+  const [inviteLink, setInviteLink] = useState<CrewInviteLink | null>(null);
   const [crewName, setCrewName] = useState(() => suggestedCrewName(playerName));
-  const [email, setEmail] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -87,15 +114,22 @@ export function CrewOnboardingPage({
     name: onboarding?.fighter?.name ?? 'your Rookie',
   }), [fighterId, fighterPhotoHash, onboarding?.fighter]);
 
+  const applyOnboardingStatus = useCallback((status: OnboardingStatus) => {
+    setOnboarding(status);
+    setCanInviteCrew(status.canInviteCrew);
+    setCrewStageReady(status.crewStageReady);
+    setCrewStageState(status.crewStageState);
+    setInvitationSent(status.invitesSent > 0);
+    setInvitationAccepted(status.invitesAccepted > 0);
+    setInviteLink(status.pendingInvite);
+  }, []);
+
   useEffect(() => {
     if (authStatus !== 'signed-in') return;
     let cancelled = false;
     void Promise.all([loadOnboardingStatus(), listCloudFighters()]).then(([status, fighters]) => {
       if (cancelled) return;
-      setOnboarding(status);
-      setCanInviteCrew(status.canInviteCrew);
-      setCrewStageReady(status.crewStageReady);
-      setCrewStageState(status.crewStageState);
+      applyOnboardingStatus(status);
       const selected = fighters.find((fighter) => (
         (fighterId && fighter.id === fighterId)
         || (fighterPhotoHash && fighter.photoHash === fighterPhotoHash)
@@ -111,18 +145,34 @@ export function CrewOnboardingPage({
         && selected?.access?.scope === 'crew'
         && selected.access.crewIds.includes(activeCrew.id)
       ));
-      setInvitationSent(status.invitesSent > 0);
     }).catch((cause: unknown) => {
       if (!cancelled) setError(cause instanceof Error ? cause.message : 'Crew progress could not be loaded.');
     });
     return () => { cancelled = true; };
-  }, [activeCrew, authStatus, fighterId, fighterPhotoHash]);
+  }, [activeCrew, applyOnboardingStatus, authStatus, fighterId, fighterPhotoHash]);
+
+  const refreshCrewProgress = useCallback(async (announce = false) => {
+    const status = await loadOnboardingStatus();
+    applyOnboardingStatus(status);
+    if (announce) {
+      setMessage(status.invitesAccepted > 0
+        ? 'Player Two joined. The Crew can choose its one included home stage.'
+        : 'The link is still waiting for Player Two.');
+    }
+  }, [applyOnboardingStatus]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in') return;
+    const refreshOnReturn = () => { void refreshCrewProgress().catch(() => { /* keep current mission state */ }); };
+    window.addEventListener('focus', refreshOnReturn);
+    return () => window.removeEventListener('focus', refreshOnReturn);
+  }, [authStatus, refreshCrewProgress]);
 
   const step = resolveCrewMissionStep({
     shared,
     canInviteCrew,
     crewStageReady,
-    invitationSent,
+    invitationAccepted,
     serverComplete: Boolean(onboarding?.complete),
   });
 
@@ -148,11 +198,7 @@ export function CrewOnboardingPage({
       await shareFighterWithActiveCrew(target);
       setShared(true);
       void loadOnboardingStatus().then((status) => {
-        setOnboarding(status);
-        setCanInviteCrew(status.canInviteCrew);
-        setCrewStageReady(status.crewStageReady);
-        setCrewStageState(status.crewStageState);
-        setInvitationSent(status.invitesSent > 0);
+        applyOnboardingStatus(status);
       }).catch(() => { /* the local mission state remains usable */ });
       setMessage(`${target.name} is now available to ${selected.name}.`);
     } catch (cause: unknown) {
@@ -162,19 +208,43 @@ export function CrewOnboardingPage({
     }
   };
 
-  const invite = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!email.trim()) return;
+  const ensureInviteLink = async (): Promise<CrewInviteLink> => {
+    if (inviteLink) return inviteLink;
+    const next = await createCrewInviteLink();
+    setInviteLink(next);
+    setInvitationSent(true);
+    return next;
+  };
+
+  const openWhatsAppInvite = async () => {
+    const shareWindow = window.open('about:blank', '_blank');
+    if (shareWindow) shareWindow.opener = null;
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      await sendCrewInvitation(email.trim());
-      setInvitationSent(true);
-      setEmail('');
-      setMessage('Invitation sent. Wait for your Crew, then choose the one shared stage together.');
+      const invitation = await ensureInviteLink();
+      const whatsappUrl = buildWhatsAppInviteUrl(invitation.url, activeCrew?.name ?? '');
+      if (shareWindow) shareWindow.location.replace(whatsappUrl);
+      else window.location.assign(whatsappUrl);
+      setMessage('WhatsApp opened. The first verified friend to use this link joins the Crew.');
     } catch (cause: unknown) {
-      setError(cause instanceof Error ? cause.message : 'The invitation could not be sent.');
+      shareWindow?.close();
+      setError(cause instanceof Error ? cause.message : 'The invite link could not be created.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const invitation = await ensureInviteLink();
+      await copyInviteUrl(invitation.url);
+      setMessage('Invite link copied. Send it to Player Two.');
+    } catch (cause: unknown) {
+      setError(cause instanceof Error ? cause.message : 'The invite link could not be copied.');
     } finally {
       setBusy(false);
     }
@@ -265,37 +335,41 @@ export function CrewOnboardingPage({
               <Button variant="primary" size="lg" onClick={onCreateStage}>
                 {crewStageState === 'reserved' ? 'Finish Choosing Crew Stage' : 'Choose Crew Stage · Included'}
               </Button>
-              <form className="create-form" onSubmit={(event) => void invite(event)}>
-                <p>Still assembling the Crew? Invite another player before you lock the stage.</p>
-                <label className="create-form__field">
-                  <span>Another friend's email</span>
-                  <input type="email" inputMode="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="player3@example.com" />
-                </label>
-                <Button type="submit" disabled={busy || !email.trim()}>
-                  {busy ? 'Sending…' : 'Invite Another Player'}
+              <div className="create-form">
+                <p>Still assembling the Crew? Send another one-time link before you lock the stage.</p>
+                <Button disabled={busy} onClick={() => void openWhatsAppInvite()}>
+                  {busy ? 'Preparing Link…' : 'Invite Another Player on WhatsApp'}
                 </Button>
-              </form>
+                <Button variant="ghost" disabled={busy} onClick={() => void copyLink()}>
+                  Copy Invite Link
+                </Button>
+              </div>
             </>
           ) : null}
 
           {step === 'invite' ? (
-            <form className="create-form" onSubmit={(event) => void invite(event)}>
-              <p>Invite a friend who is new to Insert Player. They join your Crew and get their own included Rookie.</p>
-              <label className="create-form__field">
-                <span>Friend's email</span>
-                <input type="email" inputMode="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="player2@example.com" />
-              </label>
-              <Button type="submit" variant="primary" size="lg" disabled={busy || !email.trim()}>
-                {busy ? 'Sending…' : 'Invite Player Two'}
+            <div className="create-form">
+              <p>Send Player Two a one-time link. Once they join, decide your Crew's one included home stage together.</p>
+              <Button variant="primary" size="lg" disabled={busy} onClick={() => void openWhatsAppInvite()}>
+                {busy ? 'Preparing Link…' : 'Invite Player Two on WhatsApp'}
               </Button>
+              <Button variant="ghost" disabled={busy} onClick={() => void copyLink()}>
+                Copy Invite Link
+              </Button>
+              {invitationSent ? (
+                <Button disabled={busy} onClick={() => void refreshCrewProgress(true)}>
+                  Check If Player Two Joined
+                </Button>
+              ) : null}
+              {invitationSent ? <p className="product-entry__pricing-note">Link ready · waiting for Player Two</p> : null}
               <p className="product-entry__pricing-note">Your bonus Rookie unlocks only after your friend accepts with a verified Google, Apple, or Microsoft account, creates their Rookie, and completes their Aura debut. Up to 3 bonus Rookies.</p>
-            </form>
+            </div>
           ) : null}
 
           {step === 'complete' ? (
             <>
-              <p>{invitationSent
-                ? 'Your Rookie and home stage are shared, and the first invitation is on its way.'
+              <p>{invitationAccepted
+                ? 'Your Rookie and home stage are shared, and Player Two is in the Crew.'
                 : crewStageReady
                   ? 'Your Rookie and home stage are shared with the Crew.'
                   : 'Your Rookie is shared. A Crew admin will choose the one included home stage.'} New Crew fighters and the Crew stage appear automatically in character select.</p>
@@ -328,11 +402,11 @@ export function CrewOnboardingPage({
             </div>
             <div>
               <dt>5 · Invite Player Two <span>{canInviteCrew ? 'Assemble the Crew' : 'Crew admin mission'}</span></dt>
-              <dd>{!canInviteCrew && shared ? 'Not needed' : invitationSent ? 'Done' : shared ? 'Next' : 'Locked'}</dd>
+              <dd>{!canInviteCrew && shared ? 'Not needed' : invitationAccepted ? 'Done' : invitationSent ? 'Waiting' : shared ? 'Next' : 'Locked'}</dd>
             </div>
             <div>
               <dt>6 · Choose a home stage <span>One included per Crew · decide together</span></dt>
-              <dd>{crewStageReady ? 'Done' : !canInviteCrew && shared ? 'Crew admin' : invitationSent ? 'Next' : 'Locked'}</dd>
+              <dd>{crewStageReady ? 'Done' : !canInviteCrew && shared ? 'Crew admin' : invitationAccepted ? 'Next' : 'Locked'}</dd>
             </div>
           </dl>
         </div>

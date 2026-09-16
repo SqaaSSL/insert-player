@@ -110,6 +110,8 @@ import {
 import { normalizeRoomCode, verifyRoomTicket } from './matchRoomProtocol';
 import { versusInvitationOgImage, versusInvitationSharePage } from './versusInvites';
 import {
+  acceptCrewInviteLink,
+  createCrewInviteLink,
   createCrewInvitation,
   getOnboardingStatus,
   getReferralLanding,
@@ -408,6 +410,20 @@ export default {
       const referralLandingMatch = path.match(/^\/api\/referrals\/([a-f0-9]{32})$/);
       if (referralLandingMatch && method === 'GET') {
         return addCors(await getReferralLanding(env, referralLandingMatch[1]), request, env);
+      }
+
+      const referralAcceptMatch = path.match(/^\/api\/referrals\/([a-f0-9]{32})\/accept$/);
+      if (referralAcceptMatch && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'crew:invite:accept',
+            (auth) => acceptCrewInviteLink(env, auth, referralAcceptMatch[1]),
+          ),
+          request,
+          env,
+        );
       }
 
       const publicVersusInviteMatch = path.match(
@@ -965,6 +981,19 @@ export default {
             env,
             'crew:invite',
             (auth) => createCrewInvitation(request, env, auth),
+          ),
+          request,
+          env,
+        );
+      }
+
+      if (path === '/api/crew/invite-links' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'crew:invite',
+            (auth) => createCrewInviteLink(env, auth),
           ),
           request,
           env,
