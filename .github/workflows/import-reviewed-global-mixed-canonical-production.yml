@@ -47,6 +47,7 @@ permissions:
 concurrency:
   group: production-worker-mutations
   cancel-in-progress: false
+  queue: max
 
 jobs:
   import-reviewed-global-sources:

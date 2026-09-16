@@ -3581,11 +3581,8 @@ function assertVideoSpriteProductionToolchainGate() {
   const pagesStep = pagesStepStart >= 0
     ? productionDeploy.slice(pagesStepStart, pagesStepEnd >= 0 ? pagesStepEnd : undefined)
     : '';
-  const proofAssignments = productionDeploy.match(/VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED:\s*"1"/g) ?? [];
-  if (proofAssignments.length !== 1 ||
-      !pagesStep.includes('VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"') ||
-      !pagesStep.includes('run: npm run deploy:frontend')) {
-    throw new Error('Only the Pages deploy step may inherit the exact media-toolchain proof from validation.');
+  if (!pagesStep.includes('run: npm run deploy:frontend -- --skip-production-check')) {
+    throw new Error('Pages must reuse the exact revision gate instead of repeating it inside the publication lock.');
   }
   for (const snippet of [
     'CHANGED=worker-version-tag-missing',
@@ -3990,7 +3987,8 @@ function assertGithubActionsAreWired() {
     ],
     development: [
       'group: deploy-development',
-      'cancel-in-progress: true',
+      'cancel-in-progress: false',
+      'queue: max',
       'name: development',
       'ASF_SANDBOX_PAGES_BRANCH: develop',
       'uses: ./.github/workflows/validate.yml',
