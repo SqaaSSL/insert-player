@@ -45,11 +45,11 @@ import { FightLoadingCurtain } from '../components/FightLoadingCurtain.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AuraStartReady } from '../components/AuraStartReady.tsx';
-import { AuraRoutineEditor, prepareAuraRoutines } from '../components/AuraRoutineEditor.tsx';
+import { AuraRoutineEditor } from '../components/AuraRoutineEditor.tsx';
 import { CombatStartReady } from '../components/CombatStartReady.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
-import { MATCH_START_EVENT, AURA_REMATCH_CONFIG_EVENT } from '../../game/match/MatchConfig.ts';
-import { setActiveOnlineSession, getActiveOnlineSession } from '../../game/net/onlineSession.ts';
+import { MATCH_START_EVENT, AURA_REMATCH_CONFIG_EVENT, NET_STATE_EVENT } from '../../game/match/MatchConfig.ts';
+import { setActiveOnlineSession } from '../../game/net/onlineSession.ts';
 import { AURA_ONBOARDING_EVENT } from '../../game/aura/AuraOnboarding.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT } from '../../game/aura/AuraStartup.ts';
 import { AURA_BATTLE_COMPLETE_EVENT, AURA_INPUT_EVENT, MATCH_ACTIONS_VISIBILITY_EVENT } from '../../game/match/MatchConfig.ts';
@@ -104,8 +104,6 @@ const mount = async (sceneKey = 'AuraScene', data = {}) => {
   if ('online' in data) mockOnlineSession();
   props.launchTarget = { sceneKey, data };
   flush();
-  const editor = find(node => node.type === AuraRoutineEditor);
-  if (editor) { editor.props.onPlay(prepareAuraRoutines(props.launchTarget.data)); flush(); }
   await vi.dynamicImportSettled();
 };
 const finishOpening = () => {
@@ -254,10 +252,10 @@ describe('GamePage Aura presentation handoff', () => {
   });
   it('orientation changes only the shell and do not remount a live recording/match', async () => {
     await mount(); emit('loading'); emit('ready'); finishOpening();
-    expect((committed as any).props.className).toContain('is-portrait');
+    expect(find(node => node.props?.className?.startsWith('game-shell')).props.className).toContain('is-portrait');
     viewport.innerWidth = 844; viewport.innerHeight = 390;
     viewport.dispatchEvent(new Event('resize')); flush();
-    expect((committed as any).props.className).not.toContain('is-portrait');
+    expect(find(node => node.props?.className?.startsWith('game-shell')).props.className).not.toContain('is-portrait');
     expect(runtime.create).toHaveBeenCalledTimes(1);
     expect(runtime.destroy).not.toHaveBeenCalled(); expect(starts).toHaveLength(1);
   });
@@ -547,128 +545,153 @@ describe('GamePage Aura presentation handoff', () => {
 });
 
 
-describe('Aura choreography launch', () => {
+describe('Optional Aura choreography', () => {
   const chosen = [[['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
     ['aura_glide', 'aura_mog_check', 'aura_one_leg'], ['aura_floor_worm', 'aura_one_leg', 'aura_six_seven']], null];
-  it('waits for selection and launches the exact chosen gesture order', async () => {
-    props.launchTarget = { sceneKey: 'AuraScene', data: { gameMode: 'aura', vsAI: true, seed: 17 } };
-    flush(); await vi.dynamicImportSettled();
-    expect(runtime.create).not.toHaveBeenCalled();
-    expect(curtain()).toBeUndefined();
-    find(node => node.type === AuraRoutineEditor).props.onPlay(chosen);
-    flush(); await vi.dynamicImportSettled();
+  const ready = async (data: any = { vsAI: true, seed: 17 }) => {
+    await mount('AuraScene', data);
+    emit('loading'); emit('ready'); finishOpening(); startup('awaiting-input');
+  };
+  const openEditor = () => { find(node => node.type === AuraStartReady).props.onCustomize(); flush(); };
+  const editor = () => find(node => node.type === AuraRoutineEditor);
+  const readyView = () => find(node => node.type === AuraStartReady);
+  const receiveStarts = () => {
+    const received: any[] = [];
+    viewport.addEventListener(AURA_STARTUP_READY_EVENT, event => received.push((event as CustomEvent).detail));
+    return received;
+  };
+
+  it('goes directly to the ordinary start choice with predefined moves', async () => {
+    const received = receiveStarts();
+    await ready();
     expect(runtime.create).toHaveBeenCalledTimes(1);
-    expect(runtime.create.mock.calls[0][1].data.auraRoutines).toEqual(chosen);
+    expect(editor()).toBeUndefined();
+    expect(readyView().props.onCustomize).toBeTypeOf('function');
+    readyView().props.onStart(false); flush();
+    expect(received).toEqual([{ token: 1, seed: 17, practice: false }]);
+    expect(runtime.create).toHaveBeenCalledTimes(1);
+    expect(runtime.destroy).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('saves all nine optional moves without restarting the runtime (online=%s)', async online => {
+    const received = receiveStarts();
+    await ready(online ? { online: { localSlot: 0 }, seed: 17 } : { vsAI: true, seed: 17 });
+    openEditor();
+    expect(readyView()).toBeUndefined();
+    expect(find(node => node.props?.className?.startsWith('game-shell')).props.hidden).toBe(true);
+    expect(runtime.destroy).not.toHaveBeenCalled();
+    editor().props.onPlay(chosen); flush(); await vi.dynamicImportSettled();
+    expect(received).toEqual([]);
+    expect(editor()).toBeUndefined();
+    expect(readyView()).toBeDefined();
+    expect(runtime.create).toHaveBeenCalledTimes(1);
+    openEditor();
+    expect(editor().props.initialRoutines).toEqual(chosen);
+    editor().props.onExit(); flush();
+    readyView().props.onStart(false);
+    expect(received).toEqual([{ token: 1, seed: 17, practice: false, auraRoutines: chosen }]);
     expect(props.launchTarget.data.auraRoutines).toBeUndefined();
-    emit('loading'); emit('ready'); finishOpening();
-    expect(runtime.create).toHaveBeenCalledTimes(1);
   });
-  it('asks for a fresh selection when a different match replaces the current one', async () => {
-    await mount('AuraScene', { vsAI: true });
-    props.launchTarget = { sceneKey: 'AuraScene', data: { vsAI: false, p1Name: 'A', p2Name: 'B', seed: 82 } };
+
+  it('cancels customization and starts with the unchanged default', async () => {
+    const received = receiveStarts();
+    await ready(); openEditor(); editor().props.onExit(); flush();
+    expect(props.onExit).not.toHaveBeenCalled();
+    expect(runtime.destroy).not.toHaveBeenCalled();
+    readyView().props.onStart(false);
+    expect(received[0].auraRoutines).toBeUndefined();
+  });
+
+  it('keeps the online session owned by the runtime when customization is cancelled', async () => {
+    await ready({ online: { localSlot: 1 }, seed: 17 });
+    const transport = mockOnlineSession();
+    openEditor(); editor().props.onExit(); flush();
+    expect(transport.sendControl).not.toHaveBeenCalled();
+    expect(transport.close).not.toHaveBeenCalled();
+    expect(runtime.destroy).not.toHaveBeenCalled();
+    expect(props.onExit).not.toHaveBeenCalled();
+  });
+
+  it('blocks saving when the rival departs while the optional editor is open', async () => {
+    await ready({ online: { localSlot: 0 }, seed: 17 }); openEditor();
+    viewport.dispatchEvent(new CustomEvent(NET_STATE_EVENT, { detail: { abandoned: true } })); flush();
+    expect(editor().props.error).toContain('Your rival left');
+    editor().props.onPlay(chosen); flush();
+    expect(editor()).toBeDefined();
+    expect(runtime.create).toHaveBeenCalledTimes(1);
+    editor().props.onExit(); flush();
+    expect(readyView().props.error).toContain('Your rival left');
+  });
+
+  it('starts a different match directly without carrying over optional choices', async () => {
+    const received = receiveStarts();
+    await ready(); openEditor(); editor().props.onPlay(chosen); flush();
+    props.launchTarget = { sceneKey: 'AuraScene', data: { vsAI: false, seed: 82 } };
     flush(); await vi.dynamicImportSettled();
-    expect(find(node => node.type === AuraRoutineEditor)).toBeDefined();
-    expect(runtime.destroy).toHaveBeenCalledTimes(1);
-    expect(runtime.create).toHaveBeenCalledTimes(1);
-    expect(find(node => node.type === AuraRoutineEditor).props.initialRoutines).toBeUndefined();
+    expect(editor()).toBeUndefined();
+    expect(runtime.create).toHaveBeenCalledTimes(2);
+    emit('loading', 2, 82); emit('ready', 2, 82); finishOpening(); startup('awaiting-input', null, 2, 82);
+    readyView().props.onStart(false);
+    expect(received[0]).toEqual({ token: 2, seed: 82, practice: false });
   });
+
   it.each([{ cpuVsCpu: true }, { auraChallenge: { slot: 0 } }])('preserves automatic or fixed choreography paths: %j', async data => {
-    props.launchTarget = { sceneKey: 'AuraScene', data: data as any };
-    flush(); await vi.dynamicImportSettled();
-    expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
+    await ready(data);
+    expect(editor()).toBeUndefined();
+    expect(runtime.create).toHaveBeenCalledTimes(1);
+    expect(readyView().props.onCustomize).toBeUndefined();
+  });
+
+  it('uses current rematch seed and choices and forgets a previous pending edit', async () => {
+    const received = receiveStarts();
+    await ready(); openEditor(); editor().props.onPlay(chosen); flush();
+    emit('loading', 2, 902); emit('ready', 2, 902); finishOpening();
+    const current = { seed: 902, vsAI: true, auraTrackId: 'new-track', p1Name: 'Current player', auraRoutines: chosen };
+    viewport.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: current })); flush();
+    startup('awaiting-input', null, 2, 902); openEditor();
+    expect(editor().props.data).toEqual(current);
+    expect(editor().props.initialRoutines).toBeUndefined();
+    editor().props.onExit(); flush(); readyView().props.onStart(false);
+    expect(received[0]).toEqual({ token: 2, seed: 902, practice: false });
     expect(runtime.create).toHaveBeenCalledTimes(1);
   });
-});
 
-
-describe('Aura selection session and rematch lifecycle', () => {
-  const chosen = [[['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
-    ['aura_glide', 'aura_mog_check', 'aura_one_leg'], ['aura_floor_worm', 'aura_one_leg', 'aura_six_seven']], null];
-  it('quits and closes the online session when Back is used before runtime startup', async () => {
-    const transport = mockOnlineSession();
-    props.launchTarget = { sceneKey: 'AuraScene', data: { online: { localSlot: 0 } as any } };
-    flush(); await vi.dynamicImportSettled();
-    find(node => node.type === AuraRoutineEditor).props.onExit();
-    expect(transport.sendControl).toHaveBeenCalledWith({ t: 'quit' });
-    expect(transport.close).toHaveBeenCalledTimes(1);
-    expect(getActiveOnlineSession()).toBeNull();
-    expect(props.onExit).toHaveBeenCalledOnce();
-    expect(runtime.create).not.toHaveBeenCalled();
-  });
-  it('prevents starting when the rival quits during selection', async () => {
-    const transport = mockOnlineSession();
-    props.launchTarget = { sceneKey: 'AuraScene', data: { online: { localSlot: 0 } as any } };
-    flush();
-    transport.onControl.mock.calls[0][0]({ t: 'quit' }); flush();
-    const editor = find(node => node.type === AuraRoutineEditor);
-    expect(editor.props.error).toContain('Your rival left');
-    editor.props.onPlay(chosen); flush(); await vi.dynamicImportSettled();
-    expect(runtime.create).not.toHaveBeenCalled();
-  });
-  it('reports an already-abandoned session while opening the editor', async () => {
-    const transport = mockOnlineSession();
-    transport.onState.mockImplementation(listener => { listener({ phase: 'waiting_peer', peerPresent: false }); return vi.fn(); });
-    props.launchTarget = { sceneKey: 'AuraScene', data: { online: { localSlot: 1 } as any } };
-    flush(); await vi.dynamicImportSettled();
-    expect(find(node => node.type === AuraRoutineEditor).props.error).toContain('Your rival left');
-    expect(runtime.create).not.toHaveBeenCalled();
-  });
-  it('edits the current rematch rather than restoring the original seed and song', async () => {
-    await mount('AuraScene', { seed: 17, vsAI: true });
+  it('can cancel results editing or save into the current rematch rather than the original song', async () => {
+    await ready();
     const current = { seed: 902, vsAI: true, auraTrackId: 'new-track', p1Name: 'Current player', auraRoutines: chosen };
     viewport.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: current }));
     viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
     viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
-    expect(runtime.create).toHaveBeenCalledTimes(1);
     find(node => node.type === AuraBattleResults).props.onEditRoutine(); flush();
-    expect(runtime.destroy).toHaveBeenCalledTimes(1);
-    expect(find(node => node.type === AuraRoutineEditor).props.data).toEqual(current);
-    find(node => node.type === AuraRoutineEditor).props.onPlay(chosen);
-    flush(); await vi.dynamicImportSettled();
+    expect(runtime.destroy).not.toHaveBeenCalled();
+    expect(editor().props.data).toEqual(current);
+    editor().props.onExit(); flush();
+    expect(find(node => node.type === AuraBattleResults)).toBeDefined();
+    expect(props.onExit).not.toHaveBeenCalled();
+    find(node => node.type === AuraBattleResults).props.onEditRoutine(); flush();
+    editor().props.onPlay(chosen); flush(); await vi.dynamicImportSettled();
     expect(runtime.create).toHaveBeenCalledTimes(2);
+    expect(runtime.destroy).toHaveBeenCalledTimes(1);
     expect(runtime.create.mock.calls[1][1].data).toMatchObject(current);
   });
-  it('offers editing after a fixed challenge has been remixed into free play', async () => {
-    await mount('AuraScene', { auraChallenge: { slot: 1 } });
-    viewport.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: { vsAI: true, seed: 71, p1Name: 'Swapped player' } }));
-    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
-    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
-    expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
-    find(node => node.type === AuraBattleResults).props.onEditRoutine(); flush();
-    expect(find(node => node.type === AuraRoutineEditor).props.data.p1Name).toBe('Swapped player');
+
+  it('offers customization after a fixed challenge has been remixed into free play', async () => {
+    await ready({ auraChallenge: { slot: 1 } });
+    emit('loading', 2, 71); emit('ready', 2, 71); finishOpening();
+    viewport.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: { vsAI: true, seed: 71, p1Name: 'Swapped player' } })); flush();
+    startup('awaiting-input', null, 2, 71); openEditor();
+    expect(editor().props.data.p1Name).toBe('Swapped player');
   });
-});
 
-
-it('keeps the editor online session alive through StrictMode effect replay and closes it on true unmount', async () => {
-  const transport = mockOnlineSession();
-  props.launchTarget = { sceneKey: 'AuraScene', data: { online: { localSlot: 0 } as any } };
-  flush();
-  const effects = hooks.slots.filter(slot => slot?.setup);
-  for (const effect of effects) effect.cleanup?.();
-  for (const effect of effects) effect.cleanup = effect.setup();
-  await Promise.resolve(); flush();
-  expect(transport.close).not.toHaveBeenCalled();
-  expect(find(node => node.type === AuraRoutineEditor).props.error).toBeNull();
-  for (const effect of effects) effect.cleanup?.();
-  await Promise.resolve();
-  expect(transport.close).toHaveBeenCalledOnce();
-  expect(getActiveOnlineSession()).toBeNull();
-});
-
-
-it('does not carry an open editor into a different game or a spectator match', async () => {
-  await mount('AuraScene', { seed: 17, vsAI: true });
-  viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
-  viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
-  find(node => node.type === AuraBattleResults).props.onEditRoutine(); flush();
-  expect(find(node => node.type === AuraRoutineEditor)).toBeDefined();
-  props.launchTarget = { sceneKey: 'AuraScene', data: { seed: 19, cpuVsCpu: true } };
-  flush(); await vi.dynamicImportSettled();
-  expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
-  expect(runtime.create).toHaveBeenCalledTimes(2);
-  props.launchTarget = { sceneKey: 'FightScene', data: { seed: 21 } };
-  flush(); await vi.dynamicImportSettled();
-  expect(find(node => node.type === AuraRoutineEditor)).toBeUndefined();
-  expect(runtime.create).toHaveBeenCalledTimes(3);
+  it('does not carry an open editor into a different game or spectator match', async () => {
+    await ready(); openEditor();
+    props.launchTarget = { sceneKey: 'AuraScene', data: { seed: 19, cpuVsCpu: true } };
+    flush(); await vi.dynamicImportSettled();
+    expect(editor()).toBeUndefined();
+    expect(runtime.create).toHaveBeenCalledTimes(2);
+    props.launchTarget = { sceneKey: 'FightScene', data: { seed: 21 } };
+    flush(); await vi.dynamicImportSettled();
+    expect(editor()).toBeUndefined();
+    expect(runtime.create).toHaveBeenCalledTimes(3);
+  });
 });

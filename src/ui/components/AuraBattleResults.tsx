@@ -26,6 +26,7 @@ interface AuraBattleResultsProps {
   onRetry: () => void;
   onRemix?: () => void;
   onEditRoutine?: () => void;
+  active?: boolean;
   onExit: () => void;
 }
 
@@ -50,14 +51,16 @@ export function AuraBattleResults({
   onRetry,
   onRemix,
   onEditRoutine,
+  active = true,
   onExit,
 }: AuraBattleResultsProps) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const optionsId = useId();
   const [optionsOpen, setOptionsOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  useEffect(() => { setOptionsOpen(false); panelRef.current?.focus(); }, [summary]);
-  useEffect(() => { if (!optionsOpen) videoRef.current?.pause(); }, [optionsOpen]);
+  useEffect(() => { setOptionsOpen(false); }, [summary]);
+  useEffect(() => { if (active) panelRef.current?.focus(); }, [summary, active]);
+  useEffect(() => { if (!optionsOpen || !active) videoRef.current?.pause(); }, [optionsOpen, active]);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [shareError, setShareError] = useState(false);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
@@ -182,7 +185,7 @@ export function AuraBattleResults({
                   ? 'Rival Ready · Run It Back'
                   : challenge ? 'Retry this challenge' : 'Run It Back'}
           </button>
-          {onEditRoutine ? <button type="button" className="asf-btn asf-btn--ghost" onClick={onEditRoutine}>Edit routine</button> : null}
+          {onEditRoutine ? <button type="button" className="asf-btn asf-btn--ghost" onClick={onEditRoutine}>Customize moves</button> : null}
           <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>{localSlot === undefined ? 'Menu' : 'Back To Lobby'}</button>
         </div>
         <button type="button" className="aura-results__options-toggle" aria-expanded={optionsOpen}

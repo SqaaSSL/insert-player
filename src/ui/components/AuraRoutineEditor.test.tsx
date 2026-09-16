@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { MatchSceneData } from '../../game/match/MatchConfig.ts';
 import { AuraRoutineEditor, auraRoutinePlayerSlots, moveAuraGesture, prepareAuraRoutines, replaceAuraGesture } from './AuraRoutineEditor.tsx';
-import type { AuraMatchSelection } from '../../game/aura/AuraChoreography.ts';
+import { resolveAuraPerformanceRoutine, type AuraMatchSelection } from '../../game/aura/AuraChoreography.ts';
 
 const routine: AuraMatchSelection = [
   ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
@@ -46,6 +46,14 @@ describe('Aura nine-move selection', () => {
     expect(prepareAuraRoutines({ seed: 17, vsAI: false }).every(slot => slot?.flat().length === 9)).toBe(true);
     expect(prepareAuraRoutines({ seed: 17, cpuVsCpu: true })).toEqual([null, null]);
   });
+  it('opens predefined moves unchanged for fresh matches and new rematch seeds', () => {
+    for (const seed of [17, 902]) {
+      const prepared = prepareAuraRoutines({ seed, vsAI: true });
+      for (const slot of [0, 1] as const) {
+        expect(prepared[slot]).toEqual([0, 1, 2].map(round => resolveAuraPerformanceRoutine(seed, round, slot)));
+      }
+    }
+  });
   it('lets either online seat choose its own nine moves without fabricating the remote choice', () => {
     for (const localSlot of [0, 1] as const) {
       const data = { online: { localSlot } } as MatchSceneData;
@@ -64,8 +72,8 @@ describe('Aura nine-move selection', () => {
   });
   it('shows nine editable positions grouped into three rounds and all available animations', () => {
     const markup = renderToStaticMarkup(<AuraRoutineEditor data={{ p1Name: 'Player A' }} initialRoutines={[routine, null]} onPlay={vi.fn()} onExit={vi.fn()} />);
-    expect(markup).toContain('Choose your moves');
-    expect(markup).toContain('Three rounds. Three moves each. Choose all nine');
+    expect(markup).toContain('Customize your moves');
+    expect(markup).toContain('Your nine moves are ready: three per round');
     expect(markup.match(/Change round [123] move [123]:/g)).toHaveLength(9);
     expect(markup).toContain('Round 1');
     expect(markup).toContain('Round 2');
@@ -73,14 +81,15 @@ describe('Aura nine-move selection', () => {
     expect(markup).toContain('Change round 3 move 3: Six seven');
     expect(markup).toContain('Move gesture 9 earlier');
     expect(markup).toContain('Round 1, move 1: choose an animation');
-    expect(markup).toContain('Use this routine');
+    expect(markup).toContain('Save moves');
     expect(markup).toContain('One-leg hop');
     expect(markup).toContain('role="status"');
     expect(markup).not.toContain('Choose P2 moves');
   });
-  it('makes the second local player a visible selection step', () => {
+  it('lets either local player customize without a required second step', () => {
     const markup = renderToStaticMarkup(<AuraRoutineEditor data={{ vsAI: false, p1Name: 'A', p2Name: 'B' }} onPlay={vi.fn()} onExit={vi.fn()} />);
     expect(markup).toContain('Choose whose routine to edit');
-    expect(markup).toContain('Choose P2 moves');
+    expect(markup).toContain('Save moves');
+    expect(markup).not.toContain('Choose P2 moves');
   });
 });

@@ -95,12 +95,12 @@ export function AuraRoutineEditor({ data, initialRoutines, error, onPlay, onExit
 
   return <main className="aura-routine" aria-labelledby="aura-routine-heading">
     <header className="aura-routine__header">
-      <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>Back</button>
+      <button type="button" className="asf-btn asf-btn--ghost" onClick={onExit}>Cancel</button>
       <span className="aura-routine__mode">Aura</span>
     </header>
     <div className="aura-routine__intro">
-      <h1 id="aura-routine-heading" ref={headingRef} tabIndex={-1}>Choose your moves</h1>
-      <p>Three rounds. Three moves each. Choose all nine and repeat any move you like.</p>
+      <h1 id="aura-routine-heading" ref={headingRef} tabIndex={-1}>Customize your moves</h1>
+      <p>Your nine moves are ready: three per round. Swap, repeat or reorder any of them.</p>
     </div>
     {slots.length > 1 ? <div className="aura-routine__players" role="group" aria-label="Choose whose routine to edit">
       {slots.map(slot => <button type="button" key={slot} aria-pressed={activeSlot === slot}
@@ -145,11 +145,9 @@ export function AuraRoutineEditor({ data, initialRoutines, error, onPlay, onExit
     {error ? <p className="aura-routine__error" role="alert">{error}</p> : null}
     <footer className="aura-routine__footer">
       <p>Follow the notes to keep your moves clean.<br />Your timing earns the Aura.</p>
-      {slots.length > 1 && activeSlot === 0
-        ? <button type="button" className="asf-btn asf-btn--primary" onClick={() => { setActiveSlot(1); setActiveIndex(0); }}>Choose P2 moves</button>
-        : <button type="button" className="asf-btn asf-btn--primary" disabled={Boolean(error)} onClick={() => { if (!error) onPlay(routines); }}>
-          {slots.length > 1 ? 'Use both routines' : 'Use this routine'}
-        </button>}
+      <button type="button" className="asf-btn asf-btn--primary" disabled={Boolean(error)} onClick={() => { if (!error) onPlay(routines); }}>
+        Save moves
+      </button>
     </footer>
   </main>;
 }

@@ -5591,6 +5591,7 @@
 .aura-start-ready__secondary-actions {
   @apply flex flex-wrap items-center justify-between gap-x-4;
 }
+.aura-start-ready__customize,
 .aura-start-ready__skip,
 .aura-start-ready__back {
   @apply min-h-11 cursor-pointer rounded border-0 bg-transparent px-1 py-2 font-sans text-sm text-asf-cream
@@ -5747,3 +5748,6 @@
     @apply mt-5 rounded border border-asf-warn bg-asf-bg-1 p-4 text-sm text-asf-warn;
   }
 }
+
+/* Keep the pre-start runtime alive while its optional editor owns the screen. */
+.game-shell[hidden] { display: none; }
