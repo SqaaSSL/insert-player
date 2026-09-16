@@ -254,6 +254,12 @@ export function deploymentPolicyIssues({ root = defaultRoot } = {}) {
       if (branches.length !== 1 || branches[0] !== policy.branch) {
         issues.push(`${policy.name} push trigger must contain only ${policy.branch}; found ${branches.join(', ') || 'none'}.`);
       }
+      // A docs-only head can supersede a queued code release. Every new head
+      // needs its own deployment run, or skipping the older SHA orphans it.
+      const push = mappingBlock(source, 'push', 2);
+      if (mappingBlock(push, 'paths', 4) || mappingBlock(push, 'paths-ignore', 4)) {
+        issues.push(`${policy.name} must run on every ${policy.branch} push without path filters so a newer head cannot orphan a queued release.`);
+      }
     }
     checkCanonicalPipeline(source, policy, issues);
   }

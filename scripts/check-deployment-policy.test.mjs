@@ -110,6 +110,25 @@ describe('deployment policy check', () => {
       .toContain('deploy-production.yml push trigger must contain only main; found main, feature/demo.');
   });
 
+  describe.each([workflows[0], workflows[2]])('$name cannot orphan an older queued release', workflow => {
+    it.each([
+      '    paths-ignore:\n      - "**/*.md"\n',
+      '    paths:\n      - "src/**"\n',
+      '    paths-ignore: ["**/*.md"]\n',
+      '    paths: ["src/**"]\n',
+    ])('rejects a filtered push even when a docs-only head supersedes code: %j', filter => {
+      const issues = issuesAfter(workflow, source => source.replace('permissions:', `${filter}permissions:`));
+      expect(issues).toContain(`${workflow.name} must run on every ${workflow.branch} push without path filters so a newer head cannot orphan a queued release.`);
+    });
+
+    it('accepts an unfiltered protected-branch push without a duplicate branch CI run', () => {
+      const root = fixture(canonicalFiles({
+        '.github/workflows/ci.yml': 'on:\n  pull_request:\n    branches:\n      - main\n      - develop\n  workflow_dispatch:\njobs:\n  validate:\n    uses: ./.github/workflows/validate.yml\n',
+      }));
+      expect(deploymentPolicyIssues({ root })).toEqual([]);
+    });
+  });
+
   describe.each(workflows)('$name', workflow => {
     const label = `${workflow.name} job ${workflow.job}`;
 
