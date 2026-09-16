@@ -45,10 +45,15 @@ interface ReferralRow {
   clerk_organization_id: string;
   inviter_user_id: string;
   invitee_user_id: string | null;
+  invited_email_hmac: string;
+  oauth_identity_hmac: string | null;
+  invite_channel: 'email' | 'link';
+  reward_eligible: number;
   status: 'pending' | 'accepted' | 'qualified' | 'rewarded' | 'capped' | 'revoked' | 'rejected' | 'expired';
   crew_name: string;
   inviter_display_name: string;
   expires_at: string;
+  created_at: string;
 }
 
 function json(data: unknown, status = 200): Response {
@@ -73,12 +78,107 @@ function frontendOrigin(env: Env): string {
   for (const value of (env.CORS_ORIGIN ?? '').split(',')) {
     try {
       const origin = new URL(value.trim());
-      if (origin.protocol === 'https:') return origin.origin;
+      if (origin.protocol === 'https:' || (
+        origin.protocol === 'http:'
+        && ['localhost', '127.0.0.1', '[::1]'].includes(origin.hostname)
+      )) return origin.origin;
     } catch {
       // Ignore malformed configuration entries and keep looking for HTTPS.
     }
   }
   return 'https://insertplayer.ai';
+}
+
+function inviteLink(env: Env, referralId: string): string {
+  return `${frontendOrigin(env)}/join?referral=${encodeURIComponent(referralId)}`;
+}
+
+function normalizedOAuthProvider(provider: string): string {
+  return provider.toLowerCase().replace(/^oauth_/, '');
+}
+
+function verifiedOAuthAccount(clerkUser: {
+  externalAccounts: Array<{
+    provider: string;
+    providerUserId?: string | null;
+    verification?: { status?: string | null } | null;
+  }>;
+}) {
+  return clerkUser.externalAccounts.find((account) => (
+    ALLOWED_OAUTH_PROVIDERS.has(normalizedOAuthProvider(account.provider))
+    && account.verification?.status === 'verified'
+    && Boolean(account.providerUserId)
+  ));
+}
+
+function sqliteTimestampMs(value: string): number {
+  return Date.parse(`${value.replace(' ', 'T').replace(/Z$/, '')}Z`);
+}
+
+function linkInvitationResponse(env: Env, referral: Pick<ReferralRow, 'id' | 'expires_at'>, status = 201): Response {
+  return json({
+    invitation: {
+      id: referral.id,
+      status: 'pending',
+      expiresAt: referral.expires_at,
+      url: inviteLink(env, referral.id),
+    },
+    reward: { kind: 'rookie', pending: true, cap: MAX_REWARDS_PER_INVITER },
+  }, status);
+}
+
+export async function createCrewInviteLink(env: Env, auth: AuthContext): Promise<Response> {
+  const organizationId = auth.activeOrganizationId ?? null;
+  if (!organizationId) {
+    return json({ error: 'Create or select a Crew before inviting a friend', code: 'active_organization_required' }, 409);
+  }
+  if (!canManageCrew(auth)) return json({ error: 'Only a Crew admin can invite new members' }, 403);
+  if (!auth.user.clerk_user_id) return json({ error: 'Your account is not connected to Clerk' }, 409);
+
+  const reusable = await env.DB.prepare(`
+    SELECT id, expires_at
+    FROM crew_referrals
+    WHERE inviter_user_id = ?
+      AND clerk_organization_id = ?
+      AND invite_channel = 'link'
+      AND status = 'pending'
+      AND datetime(expires_at) > datetime('now')
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(auth.userId, organizationId).first<Pick<ReferralRow, 'id' | 'expires_at'>>();
+  if (reusable) return linkInvitationResponse(env, reusable, 200);
+
+  const activeInvites = await env.DB.prepare(`
+    SELECT COUNT(*) AS count
+    FROM crew_referrals
+    WHERE inviter_user_id = ?
+      AND datetime(created_at) >= datetime('now', '-1 day')
+      AND status IN ('pending', 'accepted')
+  `).bind(auth.userId).first<{ count: number }>();
+  if ((activeInvites?.count ?? 0) >= MAX_INVITES_PER_DAY) {
+    return json({ error: 'You have reached today\'s Crew invitation limit', code: 'invite_limit_reached' }, 429);
+  }
+
+  const clerkClient = clerk(env);
+  const organization = await clerkClient.organizations.getOrganization({ organizationId });
+  const referralId = generateId();
+  const linkHmac = await hmacIdentifier(env, 'crew-referral-link-v1', referralId);
+  const expiresAt = new Date(Date.now() + INVITATION_TTL_DAYS * 86_400_000).toISOString();
+  await env.DB.prepare(`
+    INSERT INTO crew_referrals (
+      id, clerk_organization_id, inviter_user_id, invited_email_hmac,
+      crew_name, inviter_display_name, expires_at, invite_channel
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'link')
+  `).bind(
+    referralId,
+    organizationId,
+    auth.userId,
+    linkHmac,
+    normalizePublicDisplayName(organization.name, 'Crew'),
+    normalizePublicDisplayName(auth.user.display_name, 'A friend'),
+    expiresAt,
+  ).run();
+
+  return linkInvitationResponse(env, { id: referralId, expires_at: expiresAt });
 }
 
 export async function createCrewInvitation(
@@ -202,6 +302,122 @@ export async function getReferralLanding(env: Env, referralId: string): Promise<
   });
 }
 
+export async function acceptCrewInviteLink(
+  env: Env,
+  auth: AuthContext,
+  referralId: string,
+): Promise<Response> {
+  if (!/^[a-f0-9]{32}$/.test(referralId)) return json({ error: 'Invitation not found' }, 404);
+  if (!auth.user.clerk_user_id) return json({ error: 'Your account is not connected to Clerk' }, 409);
+
+  let referral = await env.DB.prepare(`
+    SELECT * FROM crew_referrals WHERE id = ? LIMIT 1
+  `).bind(referralId).first<ReferralRow>();
+  if (!referral || referral.invite_channel !== 'link'
+    || ['revoked', 'rejected', 'expired'].includes(referral.status)) {
+    return json({ error: 'Invitation not found' }, 404);
+  }
+  if (new Date(referral.expires_at).getTime() <= Date.now() && referral.status === 'pending') {
+    await env.DB.prepare(`
+      UPDATE crew_referrals SET status = 'expired', updated_at = datetime('now')
+      WHERE id = ? AND status = 'pending'
+    `).bind(referralId).run();
+    return json({ error: 'This invitation has expired' }, 410);
+  }
+  if (referral.inviter_user_id === auth.userId) {
+    return json({ error: 'Send this link to Player Two—you are already in this Crew', code: 'self_referral' }, 409);
+  }
+  if (referral.status !== 'pending' && referral.invitee_user_id !== auth.userId) {
+    return json({ error: 'This invite link has already been claimed', code: 'invite_claimed' }, 409);
+  }
+
+  const clerkClient = clerk(env);
+  const clerkUser = await clerkClient.users.getUser(auth.user.clerk_user_id);
+  const stableAccount = verifiedOAuthAccount(clerkUser);
+  if (!stableAccount) {
+    return json({
+      error: 'Continue with a verified Google, Apple, or Microsoft account to join this Crew',
+      code: 'verified_oauth_required',
+    }, 403);
+  }
+
+  if (referral.status === 'pending') {
+    const oauthIdentityHmac = await hmacIdentifier(
+      env,
+      'crew-referral-oauth-v1',
+      `${normalizedOAuthProvider(stableAccount.provider)}:${stableAccount.providerUserId}`,
+    );
+    const priorIdentity = await env.DB.prepare(`
+      SELECT id FROM crew_referrals
+      WHERE oauth_identity_hmac = ? AND id <> ?
+        AND status IN ('accepted', 'qualified', 'rewarded', 'capped')
+      LIMIT 1
+    `).bind(oauthIdentityHmac, referral.id).first<{ id: string }>();
+    const referralCreatedAt = sqliteTimestampMs(referral.created_at);
+    const accountIsNew = Number.isFinite(referralCreatedAt) && clerkUser.createdAt >= referralCreatedAt;
+    const rewardEligible = accountIsNew && !priorIdentity;
+    const claim = await env.DB.prepare(`
+      UPDATE crew_referrals
+      SET invitee_user_id = ?, status = 'accepted',
+          oauth_identity_hmac = ?, reward_eligible = ?,
+          accepted_at = COALESCE(accepted_at, datetime('now')),
+          updated_at = datetime('now')
+      WHERE id = ? AND status = 'pending'
+    `).bind(
+      auth.userId,
+      rewardEligible ? oauthIdentityHmac : null,
+      rewardEligible ? 1 : 0,
+      referral.id,
+    ).run();
+    if ((claim.meta.changes ?? 0) < 1) {
+      referral = await env.DB.prepare(`SELECT * FROM crew_referrals WHERE id = ? LIMIT 1`)
+        .bind(referralId).first<ReferralRow>();
+      if (!referral || referral.invitee_user_id !== auth.userId) {
+        return json({ error: 'This invite link has already been claimed', code: 'invite_claimed' }, 409);
+      }
+    } else {
+      referral = {
+        ...referral,
+        invitee_user_id: auth.userId,
+        oauth_identity_hmac: rewardEligible ? oauthIdentityHmac : null,
+        reward_eligible: rewardEligible ? 1 : 0,
+        status: 'accepted',
+      };
+    }
+  }
+
+  const membershipParams = {
+    organizationId: referral.clerk_organization_id,
+    userId: [auth.user.clerk_user_id],
+    limit: 1,
+  };
+  let memberships = await clerkClient.organizations.getOrganizationMembershipList(membershipParams);
+  if (memberships.data.length === 0) {
+    try {
+      await clerkClient.organizations.createOrganizationMembership({
+        organizationId: referral.clerk_organization_id,
+        userId: auth.user.clerk_user_id,
+        role: 'org:member',
+      });
+    } catch (error) {
+      memberships = await clerkClient.organizations.getOrganizationMembershipList(membershipParams);
+      if (memberships.data.length === 0) throw error;
+    }
+  }
+
+  return json({
+    invitation: {
+      id: referral.id,
+      organizationId: referral.clerk_organization_id,
+      status: 'accepted',
+    },
+    reward: {
+      eligible: Boolean(referral.reward_eligible),
+      pending: Boolean(referral.reward_eligible),
+    },
+  });
+}
+
 export async function referralRookiePasses(env: Env, userId: string): Promise<number> {
   const row = await env.DB.prepare(`
     SELECT COUNT(*) AS count FROM fighter_entitlements
@@ -228,6 +444,21 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
       AND clerk_organization_id = ?
       AND status NOT IN ('rejected', 'revoked', 'expired')
   `).bind(auth.userId, organizationId ?? '').first<{ count: number }>();
+  const acceptedInvites = await env.DB.prepare(`
+    SELECT COUNT(*) AS count FROM crew_referrals
+    WHERE inviter_user_id = ?
+      AND clerk_organization_id = ?
+      AND status IN ('accepted', 'qualified', 'rewarded', 'capped')
+  `).bind(auth.userId, organizationId ?? '').first<{ count: number }>();
+  const pendingInvite = organizationId ? await env.DB.prepare(`
+    SELECT id, expires_at FROM crew_referrals
+    WHERE inviter_user_id = ?
+      AND clerk_organization_id = ?
+      AND invite_channel = 'link'
+      AND status = 'pending'
+      AND datetime(expires_at) > datetime('now')
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(auth.userId, organizationId).first<Pick<ReferralRow, 'id' | 'expires_at'>>() : null;
   const sharedWithActiveCrew = Boolean(fighter && organizationId && !fighter.public_flag && await env.DB.prepare(`
     SELECT 1 AS shared FROM fighter_group_grants
     WHERE fighter_id = ? AND clerk_organization_id = ?
@@ -237,6 +468,7 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
   const hasCrew = Boolean(organizationId);
   const canInviteCrew = hasCrew && canManageCrew(auth);
   const invitesSent = invites?.count ?? 0;
+  const invitesAccepted = acceptedInvites?.count ?? 0;
   const crewStage = organizationId ? await env.DB.prepare(`
     SELECT id, label, kind, status, created_at
     FROM crew_stages
@@ -258,6 +490,12 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
       role: auth.activeOrganizationRole ?? null,
     } : null,
     invitesSent,
+    invitesAccepted,
+    pendingInvite: pendingInvite ? {
+      id: pendingInvite.id,
+      expiresAt: pendingInvite.expires_at,
+      url: inviteLink(env, pendingInvite.id),
+    } : null,
     sharedWithActiveCrew,
     canInviteCrew,
     crewStage: crewStageReady ? {
@@ -271,7 +509,7 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
     referralRookiePasses: passes,
     recommendedStep: !fighter || !hasCrew || !sharedWithActiveCrew
       ? (!fighter ? 'create' : 'crew')
-      : canInviteCrew && invitesSent < 1
+      : canInviteCrew && invitesAccepted < 1
         ? 'invite'
         : canInviteCrew && !crewStageReady
           ? 'stage'
@@ -280,13 +518,9 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
       fighter
       && hasCrew
       && sharedWithActiveCrew
-      && (!canInviteCrew || (crewStageReady && invitesSent > 0)),
+      && (!canInviteCrew || (crewStageReady && invitesAccepted > 0)),
     ),
   });
-}
-
-function normalizedOAuthProvider(provider: string): string {
-  return provider.toLowerCase().replace(/^oauth_/, '');
 }
 
 export async function recordOnboardingDebut(
@@ -316,6 +550,9 @@ export async function recordOnboardingDebut(
   if (auth.activeOrganizationId !== referral.clerk_organization_id) {
     return json({ recorded: true, referralQualified: false, reason: 'crew_not_active' });
   }
+  if (!referral.reward_eligible) {
+    return json({ recorded: true, referralQualified: false, rewardGranted: false, reason: 'existing_account' });
+  }
   if (referral.status === 'rewarded' || referral.status === 'capped') {
     return json({ recorded: true, referralQualified: true, rewardGranted: referral.status === 'rewarded' });
   }
@@ -323,11 +560,7 @@ export async function recordOnboardingDebut(
   const clerkUserId = auth.user.clerk_user_id;
   if (!clerkUserId) return json({ error: 'A verified social account is required' }, 403);
   const clerkUser = await clerk(env).users.getUser(clerkUserId);
-  const stableAccount = clerkUser.externalAccounts.find((account) => (
-    ALLOWED_OAUTH_PROVIDERS.has(normalizedOAuthProvider(account.provider))
-    && account.verification?.status === 'verified'
-    && Boolean(account.providerUserId)
-  ));
+  const stableAccount = verifiedOAuthAccount(clerkUser);
   if (!stableAccount) {
     return json({
       error: 'Sign in with a verified Google, Apple, or Microsoft account to qualify this referral',
@@ -339,6 +572,9 @@ export async function recordOnboardingDebut(
     'crew-referral-oauth-v1',
     `${normalizedOAuthProvider(stableAccount.provider)}:${stableAccount.providerUserId}`,
   );
+  if (referral.oauth_identity_hmac && referral.oauth_identity_hmac !== oauthIdentityHmac) {
+    return json({ error: 'This referral belongs to a different verified social account' }, 409);
+  }
   const usedIdentity = await env.DB.prepare(`
     SELECT id FROM crew_referrals
     WHERE oauth_identity_hmac = ? AND id <> ? AND status IN ('qualified', 'rewarded', 'capped')
@@ -350,7 +586,8 @@ export async function recordOnboardingDebut(
   await env.DB.batch([
     env.DB.prepare(`
       UPDATE crew_referrals
-      SET status = 'qualified', oauth_identity_hmac = ?, qualified_at = datetime('now'), updated_at = datetime('now')
+      SET status = 'qualified', oauth_identity_hmac = COALESCE(oauth_identity_hmac, ?),
+          qualified_at = datetime('now'), updated_at = datetime('now')
       WHERE id = ? AND invitee_user_id = ? AND status = 'accepted'
     `).bind(oauthIdentityHmac, referral.id, auth.userId),
     env.DB.prepare(`

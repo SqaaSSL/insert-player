@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { loadReferralLanding, type ReferralLanding } from '../../services/Crews.ts';
+import { acceptCrewInviteLink, loadReferralLanding, type ReferralLanding } from '../../services/Crews.ts';
 import type { AuthStatus } from '../authState.ts';
 import type { CrewMembershipSummary, CrewSummary } from '../crewState.ts';
 import { Button } from '../components/Button.tsx';
@@ -35,6 +35,7 @@ export function CrewJoinPage({
   const [invitation, setInvitation] = useState<ReferralLanding | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [joined, setJoined] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,14 +70,17 @@ export function CrewJoinPage({
 
   const membership = crews.find((crew) => crew.id === invitation.organizationId) ?? null;
   const crewIsActive = activeCrew?.id === invitation.organizationId;
-  const continueToRookie = async () => {
+  const joinAndContinue = async () => {
     setBusy(true);
     setError(null);
     try {
+      if (!referralId) throw new Error('Invitation not found.');
+      if (!membership && !crewIsActive) await acceptCrewInviteLink(referralId);
       if (!crewIsActive) {
-        if (!membership || !onSelectCrew) throw new Error('Accept the Crew invitation from your email, then return here.');
-        await onSelectCrew(membership.id);
+        if (!onSelectCrew) throw new Error('Crew selection is unavailable right now.');
+        await onSelectCrew(invitation.organizationId);
       }
+      setJoined(true);
       onCreateRookie();
     } catch (cause: unknown) {
       setError(cause instanceof Error ? cause.message : 'Your Crew could not be opened.');
@@ -99,12 +103,10 @@ export function CrewJoinPage({
             </>
           ) : (
             <>
-              <Button variant="primary" size="lg" disabled={busy || (!crewIsActive && !membership)} onClick={() => void continueToRookie()}>
-                {busy ? 'Opening Crew…' : 'Create My Free Rookie'}
+              <Button variant="primary" size="lg" disabled={busy} onClick={() => void joinAndContinue()}>
+                {busy ? 'Joining Crew…' : crewIsActive || membership ? 'Continue To My Free Rookie' : 'Join Crew & Create My Free Rookie'}
               </Button>
-              {!crewIsActive && !membership ? (
-                <StatusMessage severity="warn">Accept the invitation from the email first, then reload this page.</StatusMessage>
-              ) : null}
+              <p className="product-entry__pricing-note">One tap claims the link and adds you directly to the Crew.</p>
             </>
           )}
           {error ? <StatusMessage severity="error">{error}</StatusMessage> : null}
@@ -112,7 +114,7 @@ export function CrewJoinPage({
         <div className="product-entry__pricing">
           <p className="product-entry__pricing-context">Your Crew run</p>
           <dl>
-            <div><dt>1 · Join {invitation.crewName}</dt><dd>{membership || crewIsActive ? 'Done' : 'Next'}</dd></div>
+            <div><dt>1 · Join {invitation.crewName}</dt><dd>{joined || membership || crewIsActive ? 'Done' : 'Next'}</dd></div>
             <div><dt>2 · Create your Rookie <span>Your first Rookie is included</span></dt><dd>Next</dd></div>
             <div><dt>3 · Make your Aura debut <span>Then share your Rookie with the Crew</span></dt><dd>Locked</dd></div>
           </dl>

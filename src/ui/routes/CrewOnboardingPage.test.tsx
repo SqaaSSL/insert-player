@@ -1,6 +1,10 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { CrewOnboardingPage, resolveCrewMissionStep } from './CrewOnboardingPage.tsx';
+import {
+  buildWhatsAppInviteUrl,
+  CrewOnboardingPage,
+  resolveCrewMissionStep,
+} from './CrewOnboardingPage.tsx';
 
 const baseProps = {
   authStatus: 'signed-in' as const,
@@ -22,25 +26,25 @@ describe('Crew onboarding presentation', () => {
       shared: true,
       canInviteCrew: false,
       crewStageReady: false,
-      invitationSent: false,
+      invitationAccepted: false,
     })).toBe('complete');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
       crewStageReady: false,
-      invitationSent: false,
+      invitationAccepted: false,
     })).toBe('invite');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
       crewStageReady: true,
-      invitationSent: false,
+      invitationAccepted: false,
     })).toBe('invite');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
       crewStageReady: true,
-      invitationSent: true,
+      invitationAccepted: true,
     })).toBe('complete');
   });
 
@@ -94,13 +98,24 @@ describe('Crew onboarding presentation', () => {
       shared: true,
       canInviteCrew: true,
       crewStageReady: false,
-      invitationSent: true,
+      invitationAccepted: true,
     })).toBe('stage');
     expect(resolveCrewMissionStep({
       shared: true,
       canInviteCrew: true,
       crewStageReady: true,
-      invitationSent: false,
+      invitationAccepted: false,
     })).toBe('invite');
+  });
+
+  it('builds a WhatsApp share with the one-time Crew link and no email step', () => {
+    const href = buildWhatsAppInviteUrl(
+      'https://insertplayer.ai/join?referral=abc123',
+      'Night Shift',
+    );
+    expect(href).toMatch(/^https:\/\/wa\.me\/\?text=/);
+    expect(decodeURIComponent(href)).toContain('Join my Crew Night Shift');
+    expect(decodeURIComponent(href)).toContain('https://insertplayer.ai/join?referral=abc123');
+    expect(decodeURIComponent(href).toLowerCase()).not.toContain('email');
   });
 });
