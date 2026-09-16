@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - '**/*.md'
   workflow_dispatch:
     inputs:
       allow_durable_object_lifecycle:
@@ -19,10 +17,6 @@ permissions:
   contents: read
   vulnerability-alerts: read
 
-concurrency:
-  group: production-worker-mutations
-  cancel-in-progress: false
-
 jobs:
   validate:
     uses: ./.github/workflows/validate.yml
@@ -30,6 +24,10 @@ jobs:
   deploy:
     name: Deploy production
     needs: validate
+    concurrency:
+      group: production-worker-mutations
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment:
@@ -74,12 +72,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check queued release revision
+        id: queued-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-queued-release.mjs --branch=main
+
       - name: Attest canonical production source
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           node scripts/production-deploy-guard.mjs
           printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
+        if: steps.queued-release.outputs.current == 'true'
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -90,15 +96,19 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Materialize brand clearance
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
           BRAND_CLEARANCE_JSON: ${{ secrets.BRAND_CLEARANCE_JSON }}
@@ -113,6 +123,7 @@ jobs:
           printf '%s\n' "ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV"
 
       - name: Validate and stage live configuration
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
           METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
@@ -129,6 +140,7 @@ jobs:
         run: node scripts/apply-live-config.mjs --require-complete --skip-production-check --skip-secrets
 
       - name: Preflight Meterkey credentials
+        if: steps.queued-release.outputs.current == 'true'
         env:
           METERKEY_API_KEY: ${{ secrets.METERKEY_API_KEY }}
           METERKEY_BASE_URL: https://meter.hilo.cx
@@ -141,6 +153,7 @@ jobs:
         run: npm run check:meterkey-auth
 
       - name: Capture stable Worker version
+        if: steps.queued-release.outputs.current == 'true'
         id: stable-worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -150,6 +163,7 @@ jobs:
         run: node scripts/worker-version-rollout.mjs current
 
       - name: Guard rollback-safe full rollout scope
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ROLLOUT_BASE_SHA: ${{ steps.stable-worker.outputs.stable_git_sha }}
           ROLLOUT_HEAD_SHA: ${{ github.sha }}
@@ -157,6 +171,7 @@ jobs:
         run: node scripts/worker-version-rollout.mjs guard-full
 
       - name: Dry-run exact Worker and Container bundle
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -180,24 +195,28 @@ jobs:
         run: node scripts/apply-live-config.mjs --skip-production-check --dry-run-worker-deploy
 
       - name: Require an idle generation pipeline before migrations
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node scripts/check-generation-idle.mjs
 
       - name: Apply production D1 migrations
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm --prefix worker run db:migrate
 
       - name: Reconfirm an idle generation pipeline before deploy
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node scripts/check-generation-idle.mjs
 
       - name: Deploy Worker and compatible Container
+        if: steps.queued-release.outputs.current == 'true'
         id: deploy-worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -222,6 +241,7 @@ jobs:
         run: node scripts/apply-live-config.mjs --skip-production-check --deploy-worker
 
       - name: Capture deployed Worker version
+        if: steps.queued-release.outputs.current == 'true'
         id: deployed-worker
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -231,12 +251,14 @@ jobs:
         run: node scripts/worker-version-rollout.mjs current
 
       - name: Smoke production Worker
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ASF_EXPECTED_WORKER_VERSION_ID: ${{ steps.deployed-worker.outputs.stable_version_id }}
           ASF_EXPECTED_WORKER_VERSION_TAG: prod-${{ github.sha }}-${{ github.run_attempt }}
         run: npm run smoke:live
 
       - name: Wait for the compatible image processor Container
+        if: steps.queued-release.outputs.current == 'true'
         # Leave room for rollback even when individual health requests time out.
         timeout-minutes: 22
         env:
@@ -245,6 +267,7 @@ jobs:
         run: npm run check:image-processor-contract
 
       - name: Configure and verify production Clerk Crews
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
           CLERK_WEBHOOK_SIGNING_SECRET: ${{ secrets.CLERK_WEBHOOK_SIGNING_SECRET }}
@@ -252,20 +275,21 @@ jobs:
         run: node scripts/configure-clerk-crews.mjs --apply --confirm-production
 
       - name: Build, deploy, and smoke Pages
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
-        run: npm run deploy:frontend
+        run: npm run deploy:frontend -- --skip-production-check
 
       - name: Verify live readiness
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: npm run check:live-readiness
 
       - name: Restore stable Worker after failed rollout
-        if: failure() && steps.deploy-worker.outcome != 'skipped'
+        if: failure() && steps.queued-release.outputs.current == 'true' && steps.deploy-worker.outcome != 'skipped'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -273,6 +297,7 @@ jobs:
         run: node scripts/worker-version-rollout.mjs rollback
 
       - name: Publish deployment summary
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           printf '%s\n' '## Production deployment' >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' '- Frontend: https://insertplayer.ai' >> "$GITHUB_STEP_SUMMARY"
