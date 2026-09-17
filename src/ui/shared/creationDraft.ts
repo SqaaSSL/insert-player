@@ -10,7 +10,12 @@ export interface CreationDraft {
   tier: QualityTier;
   creationPackage: GenerationPackage;
   creationFlow?: CreationFlow;
+  isPublicFigure?: boolean | null;
   savedAt: number;
+}
+
+function normalizePublicFigureDeclaration(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
 }
 
 /** Explicit game-entry or checkout choices take precedence over an older draft. */
@@ -37,12 +42,13 @@ async function database(): Promise<IDBDatabase> {
 
 /** Preserve unfinished creation on this device, scoped to the current account. */
 export async function saveCreationDraft(scope: string, draft: CreationDraft): Promise<boolean> {
-  active.set(scope, draft);
+  const storedDraft = { ...draft, isPublicFigure: normalizePublicFigureDeclaration(draft.isPublicFigure) };
+  active.set(scope, storedDraft);
   try {
     const db = await database();
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction('drafts', 'readwrite');
-      tx.objectStore('drafts').put(draft, scope);
+      tx.objectStore('drafts').put(storedDraft, scope);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
@@ -74,7 +80,7 @@ export async function readCreationDraft(scope: string): Promise<CreationDraft | 
     await clearCreationDraft(scope);
     return null;
   }
-  return draft;
+  return { ...draft, isPublicFigure: normalizePublicFigureDeclaration(draft.isPublicFigure) };
 }
 
 export async function clearCreationDraft(scope: string): Promise<void> {

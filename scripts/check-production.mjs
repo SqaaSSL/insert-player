@@ -3161,7 +3161,7 @@ function assertAnonymousRookieTurnstileIsWired() {
     'if (turnstileError) return turnstileError',
     'turnstileToken: turnstileToken ?? null',
     '<TurnstileChallenge',
-    'disabled={running || auraNeedsAccount || creditCheckPending || (insufficientCredits',
+    'disabled={running || auraNeedsAccount || creditCheckPending || isPublicFigure === null || (insufficientCredits',
     ': !file || !name.trim() || !turnstileReady || !legalAccepted || !recoveryReady)}',
     'if (insufficientCredits)',
     'onGetCredits?.(tier, creationPackage, draftPersisted)',
