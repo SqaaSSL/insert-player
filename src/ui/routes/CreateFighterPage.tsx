@@ -101,6 +101,26 @@ function initialQualityTier(authStatus: AuthStatus): QualityTier {
   return initialCreationTier(context.tier, paidTiersLocked(authStatus), context.creationPackage);
 }
 
+/** Only live work reconnects automatically. Paused work needs an explicit choice. */
+export function selectCreationRecovery(jobs: readonly GenerationJob[], requestedJobId: string | null = null) {
+  const isActive = (job: GenerationJob) => job.operation === 'fighter_generation' &&
+    (job.status === 'queued' || job.status === 'running');
+  const isPaused = (job: GenerationJob) => job.operation === 'fighter_generation' &&
+    (job.status === 'failed' || job.status === 'cancelled') &&
+    job.resumable && !job.fullRunRestartRequired;
+  const available = jobs.find(isRecoverableVideoReviewJob) ?? jobs.find(isPaused) ?? null;
+  const selectedJobs = requestedJobId === null ? jobs : jobs.filter(job => job.id === requestedJobId);
+  // A live job wins even if a different paused job was explicitly selected.
+  const active = jobs.find(isActive);
+  const videoReview = selectedJobs.find(isRecoverableVideoReviewJob);
+  const resumable = selectedJobs.find(isPaused);
+  const recovering = active ?? (requestedJobId === null ? undefined : videoReview ?? resumable);
+  if (requestedJobId !== null && !recovering) {
+    throw new Error('The selected previous work is no longer available to resume. Open your characters to check its status.');
+  }
+  return { active, videoReview, resumable, recovering, available };
+}
+
 function describeStage(status: PipelineStatus): string {
   switch (status.stage) {
     case 'hashing':
@@ -195,6 +215,8 @@ export function CreateFighterPage({
   const [billingProfileChecked, setBillingProfileChecked] = useState(authStatus !== 'signed-in');
   const [billingRetrySignal, setBillingRetrySignal] = useState(0);
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
+  const [availableRecoveryJob, setAvailableRecoveryJob] = useState<GenerationJob | null>(null);
+  const [requestedRecoveryJobId, setRequestedRecoveryJobId] = useState<string | null>(null);
   const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
   const [videoReviewDecisionRequiresConsent, setVideoReviewDecisionRequiresConsent] = useState(false);
   const [pendingFighterSync, setPendingFighterSync] = useState<PendingFighterSync | null>(null);
@@ -290,6 +312,8 @@ export function CreateFighterPage({
   useEffect(() => {
     if (authStatus !== 'signed-in') {
       setResumableJob(null);
+      setAvailableRecoveryJob(null);
+      setRequestedRecoveryJobId(null);
       setVideoReviewJob(null);
       setPendingFighterSync(null);
       setRecoveryError(null);
@@ -300,8 +324,8 @@ export function CreateFighterPage({
 
     let disposed = false;
     let recoveryLookupCompleted = false;
-    let recoverableJobFound = false;
-    const retryingKnownRecovery = cloudRecoveryRetryRequired;
+    let recoverableJobFound = requestedRecoveryJobId !== null;
+    const retryingKnownRecovery = cloudRecoveryRetryRequired || requestedRecoveryJobId !== null;
     const apiContext = captureApiRequestContext();
     const controller = new AbortController();
     pollingAbortRef.current?.abort();
@@ -314,15 +338,8 @@ export function CreateFighterPage({
         const jobs = await listGenerationJobs(apiContext);
         if (disposed) return;
         recoveryLookupCompleted = true;
-        const active = jobs.find((job) => (
-          job.operation === 'fighter_generation' &&
-          (job.status === 'queued' || job.status === 'running')
-        ));
-        const videoReview = jobs.find(isRecoverableVideoReviewJob);
-        const resumable = jobs.find((job) => (
-          job.operation === 'fighter_generation' && job.resumable && !job.fullRunRestartRequired
-        ));
-        const recovering = active ?? videoReview ?? resumable;
+        const { active, videoReview, resumable, recovering, available } = selectCreationRecovery(jobs, requestedRecoveryJobId);
+        setAvailableRecoveryJob(available);
         if (!recovering) {
           setResumableJob(null);
           setVideoReviewJob(null);
@@ -364,7 +381,9 @@ export function CreateFighterPage({
           includeRawAssets: false,
           allowIncomplete: true,
         });
-        await refreshFromCache(fighter.photoHash);
+        if (disposed) return;
+        await refreshFromCache(fighter.photoHash, () => !disposed);
+        if (disposed) return;
         setCloudRecoveryRetryRequired(false);
         if (!active && videoReview) {
           setVideoReviewJob(videoReview);
@@ -431,16 +450,18 @@ export function CreateFighterPage({
       controller.abort();
       if (pollingAbortRef.current === controller) pollingAbortRef.current = null;
     };
-  }, [authSessionKey, authStatus, recoveryRetrySignal]);
+  }, [authSessionKey, authStatus, recoveryRetrySignal, requestedRecoveryJobId]);
 
-  async function refreshFromCache(hash: string): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
+  async function refreshFromCache(hash: string, isCurrent = () => true): Promise<{ meta: CachedMeta | null; sprites: CachedSprite[] }> {
     const [allMetas, nextSprites] = await Promise.all([
       getAllCachedMetas(),
       getAllSpritesForHash(hash),
     ]);
     const nextMeta = allMetas.find((item) => item.photoHash === hash && item.version === CACHE_VERSION) ?? null;
-    setMeta(nextMeta);
-    setSprites(nextSprites);
+    if (isCurrent()) {
+      setMeta(nextMeta);
+      setSprites(nextSprites);
+    }
     return { meta: nextMeta, sprites: nextSprites };
   }
 
@@ -994,6 +1015,7 @@ export function CreateFighterPage({
   }
 
   function choosePhotoAgain() {
+    pollingAbortRef.current?.abort();
     draftRestoreBlockedRef.current = true;
     void clearCreationDraft(authSessionKey);
     setStarted(false);
@@ -1006,6 +1028,10 @@ export function CreateFighterPage({
     setSprites([]);
     setGenerating(new Set());
     setResumableJob(null);
+    setAvailableRecoveryJob(null);
+    setRequestedRecoveryJobId(null);
+    setCloudRecoveryRetryRequired(false);
+    setRecoveryError(null);
     setPendingFighterSync(null);
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
@@ -1137,6 +1163,20 @@ export function CreateFighterPage({
             />
           </label>
           {draftMessage ? <p role="status">{draftMessage}</p> : null}
+          {availableRecoveryJob ? (
+            <div>
+              <p className="tier-picker__note">An earlier character has unfinished work. It stays saved while you create a new one.</p>
+              <Button variant="secondary" disabled={running || !recoveryReady} onClick={() => {
+                draftRestoreBlockedRef.current = true;
+                setRecoveryReady(false);
+                setRunning(true);
+                setStarted(true);
+                setError(null);
+                setStageText('Loading previous work. No generation has started.');
+                setRequestedRecoveryJobId(availableRecoveryJob.id);
+              }}>Review Previous Work</Button>
+            </div>
+          ) : null}
           {file ? <p className="tier-picker__note">Photo selected: {file.name}</p> : null}
           <PublicFigureDeclaration
             value={isPublicFigure}
@@ -1355,9 +1395,14 @@ export function CreateFighterPage({
                 {running ? 'Syncing Fighter...' : 'Retry Fighter Sync'}
               </button>
             ) : cloudRecoveryRetryRequired ? (
-              <button onClick={retry} disabled={running || !recoveryReady}>
-                {running || !recoveryReady ? 'Checking Cloud...' : 'Retry Cloud Recovery'}
-              </button>
+              <>
+                <button onClick={retry} disabled={running || !recoveryReady}>
+                  {running || !recoveryReady ? 'Checking Cloud...' : 'Retry Cloud Recovery'}
+                </button>
+                {requestedRecoveryJobId ? (
+                  <button onClick={onBack} disabled={running}>Leave Recovery</button>
+                ) : null}
+              </>
             ) : file || resumableJob ? (
               <button
                 onClick={retry}
