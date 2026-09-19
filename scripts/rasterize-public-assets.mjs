@@ -1,11 +1,12 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { SOCIAL_CARD_SOURCES } from './social-card-inputs.mjs';
+import { SOCIAL_CARD_APPROVED_SHA256, SOCIAL_CARD_SOURCES } from './social-card-inputs.mjs';
 import { readImageSize } from './image-dimensions.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -15,18 +16,18 @@ const checkOnly = args.has('--check');
 const assets = [
   {
     label: 'social card',
-    renderer: 'browser',
-    input: 'scripts/assets/social-card.html',
+    renderer: 'approved-artwork',
+    input: SOCIAL_CARD_SOURCES[0],
     dependencies: SOCIAL_CARD_SOURCES.slice(1),
     outputs: [
       {
-        path: 'public/assets/social-card-v8.jpg',
+        path: 'public/assets/social-card-v11.jpg',
         format: 'jpeg',
         quality: 88,
         maxBytes: 300_000,
       },
       {
-        path: 'public/assets/social-card-v8.webp',
+        path: 'public/assets/social-card-v11.webp',
         format: 'webp',
         quality: 82,
         maxBytes: 150_000,
@@ -178,7 +179,17 @@ async function main() {
 
   const command = findMagickCommand();
   for (const asset of selectedAssets) {
-    if (asset.renderer === 'browser') {
+    if (asset.renderer === 'approved-artwork') {
+      const hash = createHash('sha256').update(readFileSync(abs(asset.input))).digest('hex');
+      if (hash !== SOCIAL_CARD_APPROVED_SHA256) {
+        throw new Error('Approved social-card artwork changed; review and version it before publishing.');
+      }
+      for (const output of asset.outputs) {
+        // Ship the reviewed JPEG byte-for-byte; only derive the optional WebP.
+        if (output.format === 'jpeg') copyFileSync(abs(asset.input), abs(output.path));
+        else encodeSocialCard(command, abs(asset.input), output);
+      }
+    } else if (asset.renderer === 'browser') {
       await rasterizeWithBrowser(command, asset);
     } else {
       rasterizeWithImageMagick(command, asset);
