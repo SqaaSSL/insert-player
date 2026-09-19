@@ -30,7 +30,7 @@ export async function battleWatchPageResponse({ request, env }) {
   const title = summary ? `${winner ? `${winner} wins` : `${summary.p1Name} vs ${summary.p2Name}`} · ${summary.game.toUpperCase()}${finisher ? ' finisher' : ''} · Insert Player` : 'Your battle · Insert Player';
   const description = summary ? `Watch ${finisher ? 'the AI finisher' : 'the battle and its finale'} on Insert Player. Then make the next one yours.` : 'Sign in to see your saved battle, or play Aura, Fight and Rush free on Insert Player.';
   const canonical = `${url.origin}/battles/${id}${finisher ? '/finisher' : ''}`;
-  const image = summary ? `${api}/share/battles/${id}/og.png` : `${url.origin}/assets/social-card-v8.jpg`;
+  const image = summary ? `${api}/share/battles/${id}/og.png` : `${url.origin}/assets/social-card-v11.jpg`;
   const metadata = [`<title>${escape(title)}</title>`, meta('description', description, 'name'), meta('robots', 'noindex,nofollow,noarchive', 'name'),
     meta('og:type', 'website'), meta('og:site_name', 'Insert Player'), meta('og:title', title), meta('og:description', description), meta('og:url', canonical),
     meta('og:image', image), meta('og:image:secure_url', image), meta('og:image:width', '1200'), meta('og:image:height', '630'), meta('og:image:alt', title),

@@ -33,7 +33,7 @@ describe('Aura battle Pages route', () => {
     expect(html).toContain(`/challenges/aura/${token}/og.png?v=aura-versus-v2`);
     expect(html).toContain(`<meta property="og:url" content="https://insertplayer.ai/watch/${id}">`);
     expect(html).toContain('<script type="module" src="/src/main.tsx"></script>');
-    expect(html).not.toContain('social-card-v8');
+    expect(html).not.toContain('social-card-v11');
     expect(html).not.toContain('evil.example');
     expect(html).not.toContain('photo=');
     expect(html).not.toContain('location.replace');

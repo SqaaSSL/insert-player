@@ -1,38 +1,7 @@
-export const SOCIAL_CARD_STAGE = 'public/assets/stages/aura/aura-plaza-v3.webp';
-export const SOCIAL_CARD_ATLASES = [
-  'donald-trump/aura_six_seven',
-  'template-zero/aura_unbothered',
-];
+// User-approved marketing artwork, not a live gameplay capture.
+export const SOCIAL_CARD_APPROVED_SHA256 = 'f27111d43d5448e8627cd3435ae1ccd07704db45ac3697ef1b227bcc9bc144c6';
 export const SOCIAL_CARD_SOURCES = [
-  'scripts/assets/social-card.html',
-  'scripts/assets/social-card.css',
-  'scripts/assets/social-card-gameplay.ts',
+  'scripts/assets/social-card-photo-aura-fight-v11.jpg',
   'scripts/social-card-inputs.mjs',
   'scripts/rasterize-public-assets.mjs',
-  'src/ui/shared/auraPreviewCanvas.ts',
-  'src/ui/shared/auraPreviewDuel.ts',
-  'src/ui/shared/auraPreviewGeometry.ts',
-  'src/ui/shared/auraPreviewPresentation.ts',
-  'src/game/aura/AuraPoseCalibration.ts',
-  'src/game/aura/AuraPoseTemplates.ts',
-  'src/game/aura/AuraHud.ts',
-  'src/game/aura/AuraLayout.ts',
-  'src/game/aura/AuraLanes.ts',
-  'src/game/aura/AuraCamera.ts',
-  'src/game/aura/AuraChart.ts',
-  'src/game/aura/AuraConfig.ts',
-  'src/game/aura/AuraBattle.ts',
-  'src/game/aura/AuraComicArt.ts',
-  'src/game/aura/AuraComicFeedback.ts',
-  'src/game/aura/AuraScoreCue.ts',
-  'src/game/aura/AuraPerformance.ts',
-  'src/game/ui/CabinetTheme.ts',
-  'src/game/sprites/PoseFrameCalibration.ts',
-  'src/game/utils/SeededRng.ts',
-  'src/game/aura/AuraTracks.ts',
-  'src/game/aura/aura-tracks.generated.ts',
-  'src/services/FighterAssetPacks.ts',
-  'src/services/AuraBuiltinPerformers.ts',
-  SOCIAL_CARD_STAGE,
-  ...SOCIAL_CARD_ATLASES.map(key => `public/assets/aura/${key}.png`),
 ];
