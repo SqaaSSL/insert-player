@@ -21,13 +21,13 @@ const assets = [
     dependencies: SOCIAL_CARD_SOURCES.slice(1),
     outputs: [
       {
-        path: 'public/assets/social-card-v11.jpg',
+        path: 'public/assets/social-card-v12.jpg',
         format: 'jpeg',
         quality: 88,
         maxBytes: 300_000,
       },
       {
-        path: 'public/assets/social-card-v11.webp',
+        path: 'public/assets/social-card-v12.webp',
         format: 'webp',
         quality: 82,
         maxBytes: 150_000,
