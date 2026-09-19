@@ -14,6 +14,7 @@ import {
 } from '../match/StageConfig.ts';
 import {
   AURA_BATTLE_COMPLETE_EVENT,
+  AURA_REMATCH_CONFIG_EVENT,
   AURA_INPUT_EVENT,
   MATCH_ACTION_EVENT,
   MATCH_ACTIONS_VISIBILITY_EVENT,
@@ -49,6 +50,7 @@ import {
   AURA_DEFAULT_LANE_KEYS,
   AURA_LOCAL_P1_LANE_KEYS,
   AURA_LOCAL_P2_LANE_KEYS,
+  AURA_PHRASE_BEATS,
   AURA_ROUNDS,
   getAuraDifficulty,
   type AuraLaneKeys,
@@ -59,9 +61,9 @@ import {
   AURA_ROUTINE_ANIMATION_NAMES,
   AURA_PERFORMANCE_DEFINITIONS,
   auraPerformanceAtBeat,
-  createAuraPerformanceRoutine,
   type AuraRoutineAnimationName,
 } from '../aura/AuraPerformance.ts';
+import { isAuraMatchSelection, isAuraSelectedRoutines, normalizeAuraSelectedRoutines, resolveAuraPerformanceRoutine, type AuraMatchSelection } from '../aura/AuraChoreography.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
 import { AuraComicFeedback } from '../aura/AuraComicFeedback.ts';
 import { AuraScoreFeedback } from '../aura/AuraScoreFeedback.ts';
@@ -156,7 +158,7 @@ function drawNoteGlyph(
 type ResolvedAuraGrade = Exclude<AuraGrade, 'wrong_turn'>;
 
 type AuraOnlineControl =
-  | { t: 'aura_ready'; matchSerial: number }
+  | { t: 'aura_ready'; matchSerial: number; routine?: AuraMatchSelection | null }
   | { t: 'aura_start'; matchSerial: number; delayMs: number }
   | {
       t: 'aura_judgement';
@@ -182,7 +184,8 @@ function isAuraOnlineControl(value: unknown): value is AuraOnlineControl {
   const message = value as Record<string, unknown>;
   if (message.t === 'quit') return true;
   if (message.t === 'aura_ready') {
-    return Number.isSafeInteger(message.matchSerial) && (message.matchSerial as number) > 0;
+    return Number.isSafeInteger(message.matchSerial) && (message.matchSerial as number) > 0
+      && (message.routine === undefined || message.routine === null || isAuraMatchSelection(message.routine));
   }
   if (message.t === 'aura_start') {
     return Number.isSafeInteger(message.matchSerial)
@@ -204,8 +207,11 @@ function isAuraOnlineControl(value: unknown): value is AuraOnlineControl {
   }
   if (message.t === 'rematch_start') {
     return Number.isSafeInteger(message.previousMatchSerial)
+      && (message.previousMatchSerial as number) > 0
       && Number.isSafeInteger(message.matchSerial)
-      && Number.isSafeInteger(message.seed);
+      && (message.matchSerial as number) > (message.previousMatchSerial as number)
+      && Number.isSafeInteger(message.seed)
+      && (message.seed as number) >= 0 && (message.seed as number) <= 0xffff_ffff;
   }
   return false;
 }
@@ -320,6 +326,8 @@ export class AuraScene extends Phaser.Scene {
   private lastMilestone: [number, number] = [0, 0];
   private playerTags!: [Phaser.GameObjects.Container, Phaser.GameObjects.Container];
   private currentTurnIndex = -2;
+  private selectedPhraseProgress: [{ turnIndex: number; phrase: number } | null,
+    { turnIndex: number; phrase: number } | null] = [null, null];
 
   private keysP1: Phaser.Input.Keyboard.Key[] = [];
   private keysP2: Phaser.Input.Keyboard.Key[] = [];
@@ -381,7 +389,10 @@ export class AuraScene extends Phaser.Scene {
   init(data: MatchSceneData): void {
     this.battleCapture?.cancel();
     this.battleCapture = new BattleCaptureSession();
-    this.matchData = data;
+    const routines = normalizeAuraSelectedRoutines(data.auraRoutines);
+    this.matchData = { ...data, auraRoutines: data.online
+      ? data.online.localSlot === 0 ? [routines[0], null] : [null, routines[1]]
+      : routines };
     this.presentationReady = false;
     this.presentationStarted = false;
     this.onboarding = null;
@@ -437,6 +448,7 @@ export class AuraScene extends Phaser.Scene {
     this.finaleWinner = null;
     this.stageFrame = null;
     this.currentTurnIndex = -2;
+    this.selectedPhraseProgress = [null, null];
     this.clockStartedAt = null;
     this.musicClock.reset();
     this.scheduledClockStart = null;
@@ -504,6 +516,14 @@ export class AuraScene extends Phaser.Scene {
     window.addEventListener(AURA_ONBOARDING_SKIP_EVENT, this.onOnboardingSkip);
     this.setMatchActionsVisible(false);
 
+    // The editor has handed off the transport. Listen before awaiting media so
+    // a rival leaving during asset loading cannot leave this scene waiting.
+    if (this.online && !this.attachOnlineSession(this.online)) {
+      debugWarn('[AuraScene] Online match has no live rival; returning to menu');
+      if (!this.opponentLeft) this.exitToMenu();
+      return;
+    }
+
     this.resolvedStageId = this.stageId ?? DEFAULT_AURA_STAGE_ID;
     const stage = getStageTheme(this.resolvedStageId);
     this.stageLabel = this.customStageKey
@@ -522,11 +542,12 @@ export class AuraScene extends Phaser.Scene {
     this.emitCapture({ id: this.captureId, state: 'preparing' });
     try {
       this.actionRecorder = new AuraRecorder({
-        engineVersion: 'aura-presentation-v1', matchSeed: this.matchSeed,
+        engineVersion: 'aura-choreography-3x3-v1', matchSeed: this.matchSeed,
         trackId: this.track.id, difficulty: this.difficultyId, stageId: this.resolvedStageId,
         p1Name: this.p1Name, p2Name: this.p2Name,
         p1CloudFighterId: this.p1CloudFighterId, p2CloudFighterId: this.p2CloudFighterId,
         ...(isAuraTrialPresetMatch(this.matchData) ? { auraTrialPreset: this.matchData.auraTrialPreset } : {}),
+        auraRoutines: this.matchData.auraRoutines,
         chart: this.chart,
       });
     } catch (error) { debugWarn('[AuraScene] Action history unavailable', error); }
@@ -567,12 +588,6 @@ export class AuraScene extends Phaser.Scene {
         this.isCpuSlot(0) ? createAuraCpuPlan(this.chart, 0, this.difficultyId) : [],
         this.isCpuSlot(1) ? createAuraCpuPlan(this.chart, 1, this.difficultyId) : [],
       ];
-
-      if (this.online && !this.attachOnlineSession(this.online)) {
-        debugWarn('[AuraScene] Online match has no live session; returning to menu');
-        this.exitToMenu();
-        return;
-      }
 
       this.updateScoreUi();
       this.updateTurnPresentation(-1);
@@ -723,6 +738,7 @@ export class AuraScene extends Phaser.Scene {
   private awaitStartupGesture(): void {
     this.awaitingStartInput = true;
     this.startupView?.render(this.layout, null);
+    this.emitRematchConfig();
     window.dispatchEvent(new CustomEvent(AURA_STARTUP_EVENT, {
       detail: { token: this.presentationToken, seed: this.matchSeed,
         phase: 'awaiting-input', remainingMs: 0, count: null },
@@ -731,7 +747,21 @@ export class AuraScene extends Phaser.Scene {
 
   private readonly onStartupReady = (event: WindowEventMap[typeof AURA_STARTUP_READY_EVENT]): void => {
     if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || !this.awaitingStartInput
-      || this.paused || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
+      || this.paused || this.opponentLeft || this.localOnlineReady || this.clockStartedAt !== null
+      || this.scheduledClockStart !== null || this.matchFinished || this.finalizing || this.actionCommitted
+      || event.detail?.token !== this.presentationToken || event.detail?.seed !== this.matchSeed) return;
+    if (event.detail.auraRoutines !== undefined) {
+      if (this.cpuVsCpu || this.matchData.auraChallenge || !isAuraSelectedRoutines(event.detail.auraRoutines)) return;
+      const selected = normalizeAuraSelectedRoutines(event.detail.auraRoutines);
+      const current = normalizeAuraSelectedRoutines(this.matchData.auraRoutines);
+      // The peer's own ready packet is authoritative for its slot, even if it
+      // arrived while the local player was editing an older UI snapshot.
+      const routines = this.online
+        ? this.online.localSlot === 0 ? [selected[0], current[1]] as const : [current[0], selected[1]] as const
+        : selected;
+      this.actionRecorder?.setRoutines(routines);
+      this.matchData.auraRoutines = routines;
+    }
     this.awaitingStartInput = false;
     if (typeof event.detail.practice === 'boolean') {
       this.onboardingRequested = event.detail.practice && canGuideAuraFirstBattle(this.matchData);
@@ -751,6 +781,18 @@ export class AuraScene extends Phaser.Scene {
       else void this.prepareStartup();
     });
   };
+
+  private emitRematchConfig(): void {
+    window.dispatchEvent(new CustomEvent(AURA_REMATCH_CONFIG_EVENT, { detail: {
+      ...this.matchData,
+      gameMode: 'aura', vsAI: this.isVsAI, cpuVsCpu: this.cpuVsCpu,
+      p1Name: this.p1Name, p2Name: this.p2Name,
+      seed: this.matchSeed, auraTrackId: this.track.id,
+      auraDifficulty: this.difficultyId, stageId: this.resolvedStageId,
+      auraRoutines: normalizeAuraSelectedRoutines(this.matchData.auraRoutines),
+      ...(this.online ? { online: { ...this.online } } : {}),
+    } satisfies MatchSceneData }));
+  }
 
   private startOnboarding(): void {
     this.startupView?.render(this.layout, null);
@@ -1985,7 +2027,7 @@ export class AuraScene extends Phaser.Scene {
         noteObject.destroy();
       }
     }
-    this.animateFighterForJudgement(judgement);
+    this.animateFighterForJudgement(judgement, atMs);
     this.showFeedback(judgement);
     this.updateScoreUi();
     this.trackMilestone(judgement);
@@ -2070,16 +2112,28 @@ export class AuraScene extends Phaser.Scene {
     this.soundManager.setAuraCrowdMix(this.crowdHeat[slot], this.currentRoundProgress(), negativePunch);
   }
 
-  private animateFighterForJudgement(judgement: AuraJudgement): void {
+  private animateFighterForJudgement(judgement: AuraJudgement, atMs = this.musicClock.timeMs): void {
     // Network results may arrive after a handoff. Score them, but never wake
     // the waiting performer or replace the current performer's visual phrase.
     if (judgement.grade === 'wrong_turn' || this.activePerformerSlot !== judgement.slot) return;
     const fighter = this.fighters[judgement.slot];
     const performanceView = this.auraPerformanceViews[judgement.slot];
     const note = judgement.noteId ? this.noteById.get(judgement.noteId) ?? null : null;
-    const routine = note ? createAuraPerformanceRoutine(this.matchSeed, this.chart.turns[note.turnIndex].round) : null;
+    const turn = this.chart.turns[note?.turnIndex ?? this.currentTurnIndex];
+    const hasSelectedRounds = isAuraMatchSelection(this.matchData.auraRoutines?.[judgement.slot]);
+    // A late result from this same player's previous round still scores, but
+    // must not replace the choreography for the round now on stage.
+    if (hasSelectedRounds && note && note.turnIndex !== this.currentTurnIndex) return;
+    const routine = turn && (note || hasSelectedRounds) ? resolveAuraPerformanceRoutine(this.matchSeed,
+      turn.round, judgement.slot, this.matchData.auraRoutines) : null;
+    const beat = note?.beat ?? (turn ? (atMs - turn.firstNoteMs) / this.chart.beatMs : 0);
+    const phrase = Math.min(2, Math.max(0, Math.floor(Math.max(0, beat) * 3 / AURA_PHRASE_BEATS)));
+    const previous = this.selectedPhraseProgress[judgement.slot];
+    // Inputs and collected misses can arrive out of note order. Keep selected
+    // positions moving forward even when two positions share the same gesture.
+    if (hasSelectedRounds && previous?.turnIndex === this.currentTurnIndex && phrase < previous.phrase) return;
     const requested = this.canaryPerformanceOverride
-      ?? (note && routine ? auraPerformanceAtBeat(routine, note.beat) : null);
+      ?? (routine ? auraPerformanceAtBeat(routine, beat) : null);
     let played: AuraAnimationName | null = requested && performanceView?.play(requested) ? requested : null;
     if (!played && performanceView) {
       const fallback = performanceView.firstRoutineAnimation();
@@ -2090,6 +2144,9 @@ export class AuraScene extends Phaser.Scene {
       performanceView.update(0, this.views[judgement.slot]);
     } else {
       fighter.forceState(this.choreographyFor(judgement));
+    }
+    if (hasSelectedRounds && turn && (played || !performanceView)) {
+      this.selectedPhraseProgress[judgement.slot] = { turnIndex: this.currentTurnIndex, phrase };
     }
     // Context belongs to the move actually rendered, not an unavailable pack.
     if (played && (judgement.grade === 'perfect' || judgement.grade === 'great' || judgement.grade === 'good')) {
@@ -2280,7 +2337,7 @@ export class AuraScene extends Phaser.Scene {
 
   private beginClock(delayMs: number, keepStartupPresentation = false): void {
     if (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted || this.paused
-      || this.onboarding?.snapshot.phase === 'practice') return;
+      || this.opponentLeft || this.onboarding?.snapshot.phase === 'practice') return;
     if (this.online && !this.localOnlineReady) return;
     if (this.scheduledClockStart !== null || this.clockStartedAt !== null) return;
     this.scheduledClockStart = performance.now() + delayMs;
@@ -2408,7 +2465,8 @@ export class AuraScene extends Phaser.Scene {
       stageId: this.resolvedStageId,
       stageLabel: this.stageLabel,
       ...(!this.customStageKey ? {
-        challengeRoutine: createAuraChallengeRoutine(this.matchSeed, this.difficultyId, this.track.id, this.resolvedStageId) ?? undefined,
+        challengeRoutine: createAuraChallengeRoutine(this.matchSeed, this.difficultyId, this.track.id, this.resolvedStageId,
+          this.matchData.auraRoutines?.some(Boolean) ? this.matchData.auraRoutines : undefined) ?? undefined,
         challengeShareSlots: this.matchData.auraChallenge ? [this.matchData.auraChallenge.slot] : this.online ? [this.online.localSlot]
           : this.cpuVsCpu ? [] : this.isVsAI ? [0] : [0, 1],
       } : {}),
@@ -2420,6 +2478,7 @@ export class AuraScene extends Phaser.Scene {
     this.fitHudText();
     this.soundManager.playAnnounce('wins');
     this.soundManager.peakAuraCrowd();
+    if (!this.online) this.emitRematchConfig();
     window.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: summary }));
     try {
       this.actionRecorder?.finish(summary);
@@ -2503,14 +2562,18 @@ export class AuraScene extends Phaser.Scene {
       session.transport.onControl((value) => this.onOnlineControl(value)),
       session.transport.onState((state) => this.onTransportState(state)),
     );
+    // onState immediately supplies the current state, including a departure
+    // that happened in the gap between the editor and Phaser mounting.
+    if (this.opponentLeft) return false;
     this.emitOnlineRematchState('idle');
     return true;
   }
 
   private announceOnlineReady(): void {
-    if (!this.online || !this.onlineSession || !this.localOnlineReady) return;
+    if (!this.online || !this.onlineSession || !this.localOnlineReady || this.opponentLeft) return;
     const sent = this.onlineSession.transport.sendControl({
       t: 'aura_ready', matchSerial: this.online.matchSerial,
+      routine: this.matchData.auraRoutines?.[this.online.localSlot] ?? null,
     } satisfies AuraOnlineControl);
     if (sent) this.maybeAnnounceOnlineClock();
   }
@@ -2522,6 +2585,7 @@ export class AuraScene extends Phaser.Scene {
       || this.onlineSession.seat !== 'host'
       || !this.localOnlineReady
       || !this.remoteOnlineReady
+      || this.opponentLeft
       || this.onlineClockAnnounced
     ) return;
     this.onlineClockAnnounced = true;
@@ -2533,8 +2597,23 @@ export class AuraScene extends Phaser.Scene {
 
   private onOnlineControl(value: unknown): void {
     if (!isAuraOnlineControl(value) || !this.online) return;
-    if ('matchSerial' in value && value.matchSerial !== this.online.matchSerial) return;
+    if ('matchSerial' in value && value.t !== 'rematch_start' && value.matchSerial !== this.online.matchSerial) return;
+    // The transport attaches before the battle and its views exist. Startup
+    // accepts the readiness handshake and departure, never scored gameplay.
+    if ((value.t === 'aura_judgement' || value.t === 'aura_finish')
+      && (!this.lifecycleActive || !this.presentationReady || !this.presentationStarted
+        || this.clockStartedAt === null || this.matchFinished || this.opponentLeft)) return;
+    if ((value.t === 'rematch_ready' || value.t === 'rematch_start')
+      && (!this.lifecycleActive || this.opponentLeft || (!this.finalizing && !this.matchFinished))) return;
     if (value.t === 'aura_ready') {
+      // Readiness pins the peer's own slot once. Delayed/duplicate controls
+      // cannot rewrite a running performance or its recorded configuration.
+      if (this.remoteOnlineReady || this.clockStartedAt !== null || this.scheduledClockStart !== null) return;
+      const routines = normalizeAuraSelectedRoutines(this.matchData.auraRoutines);
+      this.matchData.auraRoutines = this.online.localSlot === 0
+        ? [routines[0], value.routine ?? null] : [value.routine ?? null, routines[1]];
+      this.matchData.auraRoutines = normalizeAuraSelectedRoutines(this.matchData.auraRoutines);
+      this.actionRecorder?.setRoutines(this.matchData.auraRoutines);
       this.remoteOnlineReady = true;
       this.announceOnlineReady();
       this.maybeAnnounceOnlineClock();
@@ -2549,8 +2628,7 @@ export class AuraScene extends Phaser.Scene {
     } else if (value.t === 'aura_finish') {
       this.remoteFinalScore = scoreCopy(value.score);
     } else if (value.t === 'quit') {
-      this.opponentLeft = true;
-      if (!this.finalizing) this.beginFinalization();
+      this.handleOnlineDeparture();
     } else if (value.t === 'rematch_ready' && value.previousMatchSerial === this.online.matchSerial) {
       this.remoteRematchReady = true;
       if (!this.localRematchReady) this.emitOnlineRematchState('rival_ready', 'Your rival is ready to farm again.');
@@ -2559,6 +2637,7 @@ export class AuraScene extends Phaser.Scene {
       value.t === 'rematch_start'
       && value.previousMatchSerial === this.online.matchSerial
       && this.onlineSession?.seat === 'guest'
+      && this.matchFinished && this.localRematchReady
     ) {
       this.restartOnlineMatch(value.matchSerial, value.seed);
     }
@@ -2567,7 +2646,7 @@ export class AuraScene extends Phaser.Scene {
   private onTransportState(state: PeerTransportState): void {
     if (state.phase === 'connected') this.announceOnlineReady();
     if (!state.peerPresent && (state.phase === 'closed' || state.phase === 'error' || state.phase === 'waiting_peer')) {
-      this.opponentLeft = true;
+      this.handleOnlineDeparture();
     }
     window.dispatchEvent(new CustomEvent(NET_STATE_EVENT, {
       detail: {
@@ -2581,6 +2660,25 @@ export class AuraScene extends Phaser.Scene {
         abandoned: this.opponentLeft,
       },
     }));
+  }
+
+  private handleOnlineDeparture(): void {
+    this.opponentLeft = true;
+    if (this.clockStartedAt === null) {
+      if (this.actionCommitted) return;
+      this.actionCommitted = true;
+      this.scheduledClockStart = null;
+      this.presentationReady = false;
+      this.presentationStarted = false;
+      this.startupAbort?.abort();
+      // Let the normal shutdown own resource disposal; invalidate outstanding
+      // asset loads and the delayed start while navigation unmounts the scene.
+      this.lifecycleEpoch += 1;
+      if (getActiveOnlineSession() === this.onlineSession) endActiveOnlineSession();
+      this.exitToMenu();
+      return;
+    }
+    if (!this.finalizing && !this.matchFinished) this.beginFinalization();
   }
 
   private requestOnlineRematch(): void {
@@ -2645,6 +2743,7 @@ export class AuraScene extends Phaser.Scene {
       customStageKey: this.customStageKey ?? undefined,
       customStageLabel: this.customStageLabel ?? undefined,
       auraDifficulty: this.difficultyId,
+      auraRoutines: this.matchData.auraRoutines,
       seed,
       online: { ...this.online, matchSerial },
     } satisfies MatchSceneData);
@@ -2713,6 +2812,7 @@ export class AuraScene extends Phaser.Scene {
       p1PhotoHash: this.matchData.p2PhotoHash, p2PhotoHash: this.matchData.p1PhotoHash,
       p1CloudFighterId: this.matchData.p2CloudFighterId, p2CloudFighterId: this.matchData.p1CloudFighterId,
       p1PersonalityId: this.matchData.p2PersonalityId, p2PersonalityId: this.matchData.p1PersonalityId,
+      auraRoutines: [this.matchData.auraRoutines?.[1] ?? null, this.matchData.auraRoutines?.[0] ?? null] as const,
     } : {};
     this.scene.restart({
       ...this.matchData,
@@ -2796,7 +2896,8 @@ export class AuraScene extends Phaser.Scene {
     this.soundManager?.destroy();
     for (const unsubscribe of this.onlineUnsubscribe) unsubscribe();
     this.onlineUnsubscribe = [];
-    if (this.online && !this.preserveOnlineSessionOnRestart) endActiveOnlineSession();
+    if (this.online && !this.preserveOnlineSessionOnRestart
+      && getActiveOnlineSession() === this.onlineSession) endActiveOnlineSession();
     if (this.customStageTextureKey && this.textures.exists(this.customStageTextureKey)) {
       this.textures.remove(this.customStageTextureKey);
     }

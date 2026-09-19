@@ -4,6 +4,7 @@ import configSource from './AuraConfig.ts?raw';
 import rngSource from '../utils/SeededRng.ts?raw';
 import clockSource from './AuraMusicClock.ts?raw';
 import performanceSource from './AuraPerformance.ts?raw';
+import choreographySource from './AuraChoreography.ts?raw';
 import { AuraBattle } from './AuraBattle.ts';
 import { createAuraChart } from './AuraChart.ts';
 import { getAuraTrack } from './AuraTracks.ts';
@@ -11,6 +12,7 @@ import type { AuraDifficultyId } from './AuraConfig.ts';
 import { AURA_CHALLENGE_ASSETS } from './AuraChallengeAssets.ts';
 import { STAGE_THEMES, type StageThemeId } from '../match/StageConfig.ts';
 import type { MatchSceneData } from '../match/MatchConfig.ts';
+import { isAuraSelectedRoutines, normalizeAuraSelectedRoutines, type AuraSelectedRoutines } from './AuraChoreography.ts';
 
 export const AURA_CHALLENGE_VERSION = 1;
 export const AURA_CHALLENGE_MAX_TOKEN_LENGTH = 2_048;
@@ -30,6 +32,8 @@ function fingerprint(value: string): string {
 }
 
 export const AURA_CHALLENGE_RULES = `aura-1-${fingerprint([battleSource, chartSource, configSource, rngSource, clockSource, performanceSource].join('\n'))}`;
+/** Keep seeded links compatible; only selected routines depend on the new resolver. */
+export const AURA_CHALLENGE_CHOREOGRAPHY_RULES = `aura-1-${fingerprint([battleSource, chartSource, configSource, rngSource, clockSource, performanceSource, choreographySource].join('\n'))}`;
 
 export interface AuraChallengeRoutine {
   version: typeof AURA_CHALLENGE_VERSION;
@@ -41,6 +45,7 @@ export interface AuraChallengeRoutine {
   stageId: StageThemeId;
   stageVersion: string;
   chartId: string;
+  auraRoutines?: AuraSelectedRoutines;
 }
 
 /** Only information the sender explicitly chooses to put in a public link.
@@ -55,7 +60,7 @@ type ChallengeError = 'invalid' | 'incompatible';
 export type AuraChallengeResult = { ok: true; challenge: AuraChallenge }
   | { ok: false; error: ChallengeError };
 const ROUTINE_KEYS = ['version', 'rules', 'seed', 'difficulty', 'trackId', 'trackVersion', 'stageId', 'stageVersion', 'chartId'] as const;
-const CHALLENGE_KEYS = [...ROUTINE_KEYS, 'name', 'score', 'slot'];
+const CHALLENGE_KEYS = [...ROUTINE_KEYS, 'name', 'score', 'slot', 'auraRoutines'];
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -75,11 +80,13 @@ export function createAuraChallengeRoutine(
   difficulty: AuraDifficultyId,
   trackId: string,
   stageId: StageThemeId,
+  auraRoutines?: AuraSelectedRoutines,
 ): AuraChallengeRoutine | null {
   if (!Number.isInteger(seed) || seed < 1 || seed > 0xffff_ffff
     || !['lowkey', 'viral', 'untouchable'].includes(difficulty)
     || typeof trackId !== 'string' || trackId.length > 64
-    || typeof stageId !== 'string' || stageId.length > 64) return null;
+    || typeof stageId !== 'string' || stageId.length > 64
+    || (auraRoutines !== undefined && !isAuraSelectedRoutines(auraRoutines))) return null;
   const track = getAuraTrack(trackId);
   const trackAsset = AURA_CHALLENGE_ASSETS[`track:${trackId}`];
   const stageAsset = AURA_CHALLENGE_ASSETS[`stage:${stageId}`];
@@ -87,17 +94,19 @@ export function createAuraChallengeRoutine(
   if (!track || !trackAsset || track.url !== trackAsset.url || !stageAsset || stage?.assetPath !== stageAsset.url) return null;
   const chart = createAuraChart(seed, difficulty, track);
   return {
-    version: AURA_CHALLENGE_VERSION, rules: AURA_CHALLENGE_RULES,
+    version: AURA_CHALLENGE_VERSION,
+    rules: auraRoutines === undefined ? AURA_CHALLENGE_RULES : AURA_CHALLENGE_CHOREOGRAPHY_RULES,
     seed, difficulty, trackId, trackVersion: trackAsset.sha256,
     stageId, stageVersion: stageAsset.sha256,
     chartId: fingerprint(JSON.stringify(chart)),
+    ...(auraRoutines === undefined ? {} : { auraRoutines: normalizeAuraSelectedRoutines(auraRoutines) }),
   };
 }
 
 export function isCompatibleAuraRoutine(value: unknown): value is AuraChallengeRoutine {
   if (!plainObject(value)) return false;
   const current = createAuraChallengeRoutine(value.seed as number, value.difficulty as AuraDifficultyId,
-    value.trackId as string, value.stageId as StageThemeId);
+    value.trackId as string, value.stageId as StageThemeId, value.auraRoutines as AuraSelectedRoutines | undefined);
   return current !== null && ROUTINE_KEYS.every(key => current[key] === value[key]);
 }
 
@@ -110,7 +119,7 @@ export function maxAuraChallengeScore(routine: AuraChallengeRoutine, slot: 0 | 1
 }
 
 export function validateAuraChallenge(value: unknown): AuraChallengeResult {
-  if (!plainObject(value) || Object.keys(value).length !== CHALLENGE_KEYS.length
+  if (!plainObject(value) || Object.keys(value).length !== CHALLENGE_KEYS.length - (value.auraRoutines === undefined ? 1 : 0)
     || Object.keys(value).some(key => !CHALLENGE_KEYS.includes(key as typeof CHALLENGE_KEYS[number]))
     || typeof value.name !== 'string' || !value.name || value.name !== cleanAuraChallengeName(value.name)
     || (value.slot !== 0 && value.slot !== 1)
@@ -118,7 +127,7 @@ export function validateAuraChallenge(value: unknown): AuraChallengeResult {
   if (!isCompatibleAuraRoutine(value)) return { ok: false, error: 'incompatible' };
   if ((value.score as number) > maxAuraChallengeScore(value, value.slot as 0 | 1)) return { ok: false, error: 'invalid' };
   // Build a fresh allowlisted object; never retain unknown input prototypes.
-  const routine = createAuraChallengeRoutine(value.seed, value.difficulty, value.trackId, value.stageId)!;
+  const routine = createAuraChallengeRoutine(value.seed, value.difficulty, value.trackId, value.stageId, value.auraRoutines)!;
   return { ok: true, challenge: { ...routine, name: value.name as string, score: value.score as number, slot: value.slot as 0 | 1 } };
 }
 
@@ -165,6 +174,7 @@ export function buildAuraChallengeMatch(challenge: AuraChallenge): MatchSceneDat
     p1Name: safe.slot === 0 ? 'NOVA' : 'BYTE', p2Name: safe.slot === 1 ? 'NOVA' : 'BYTE',
     seed: safe.seed, auraDifficulty: safe.difficulty, auraTrackId: safe.trackId,
     stageId: safe.stageId, auraChallenge: safe,
+    ...(safe.auraRoutines === undefined ? {} : { auraRoutines: normalizeAuraSelectedRoutines(safe.auraRoutines) }),
   };
 }
 
@@ -181,5 +191,8 @@ export function isValidAuraChallengeMatch(data: MatchSceneData): boolean {
   return data.gameMode === 'aura' && data.vsAI === true && data.cpuVsCpu === false
     && !data.online && !data.customStageKey && !data.customStageLabel
     && data.seed === challenge.seed && data.auraTrackId === challenge.trackId
-    && data.auraDifficulty === challenge.difficulty && data.stageId === challenge.stageId;
+    && data.auraDifficulty === challenge.difficulty && data.stageId === challenge.stageId
+    && (data.auraRoutines === undefined || isAuraSelectedRoutines(data.auraRoutines))
+    && JSON.stringify(normalizeAuraSelectedRoutines(data.auraRoutines))
+      === JSON.stringify(normalizeAuraSelectedRoutines(challenge.auraRoutines));
 }

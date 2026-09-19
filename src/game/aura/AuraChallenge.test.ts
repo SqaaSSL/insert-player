@@ -3,7 +3,9 @@ import {
   AURA_CHALLENGE_MAX_TOKEN_LENGTH, auraChallengeUrl, buildAuraChallengeMatch, cleanAuraChallengeName,
   compareAuraChallenge, createAuraChallenge, createAuraChallengeRoutine, decodeAuraChallenge,
   encodeAuraChallenge, isValidAuraChallengeMatch, maxAuraChallengeScore, validateAuraChallenge,
+  AURA_CHALLENGE_RULES,
 } from './AuraChallenge.ts';
+import { resolveAuraPerformanceRoutine } from './AuraChoreography.ts';
 import { createAuraChart } from './AuraChart.ts';
 import { AuraBattle } from './AuraBattle.ts';
 import { DEFAULT_AURA_TRACK, getAuraTrack } from './AuraTracks.ts';
@@ -17,6 +19,44 @@ function tokenForUnknown(value: unknown): string {
 }
 
 describe('asynchronous Aura challenge journey', () => {
+  it('keeps the previous seeded challenge revision compatible without substituting gestures', () => {
+    // Fingerprint of the previously deployed seeded rules. Adding the editor
+    // must not invalidate those links when their note and move rules are identical.
+    expect(AURA_CHALLENGE_RULES).toBe('aura-1-d23aeb791c3c653d');
+    const original = createAuraChallenge(routine(), 'Player', 500);
+    const received = decodeAuraChallenge(tokenForUnknown(original));
+    expect(received).toEqual({ ok: true, challenge: original });
+    expect(buildAuraChallengeMatch(original)).not.toHaveProperty('auraRoutines');
+  });
+
+  it.each([0, 1] as const)('preserves all nine chosen positions for challenge slot %i with identical scoring', slot => {
+    const auraRoutines = [
+      [['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
+        ['aura_glide', 'aura_one_leg', 'aura_mog_check'], ['aura_one_leg', 'aura_six_seven', 'aura_floor_worm']],
+      [['aura_glide', 'aura_mog_check', 'aura_floor_worm'],
+        ['aura_six_seven', 'aura_six_seven', 'aura_one_leg'], ['aura_mog_check', 'aura_floor_worm', 'aura_glide']],
+    ] as const;
+    const selected = createAuraChallengeRoutine(1234, 'viral', DEFAULT_AURA_TRACK.id, 'insert-player-arena', auraRoutines)!;
+    expect(selected.rules).not.toBe(AURA_CHALLENGE_RULES);
+    expect(selected.chartId).toBe(routine().chartId);
+    expect(maxAuraChallengeScore(selected, slot)).toBe(maxAuraChallengeScore(routine(), slot));
+    const challenge = createAuraChallenge(selected, 'Player', 500, slot);
+    const received = decodeAuraChallenge(encodeAuraChallenge(challenge));
+    expect(received).toEqual({ ok: true, challenge });
+    const match = buildAuraChallengeMatch(challenge);
+    expect(isValidStoredMatchData(match)).toBe(true);
+    for (const round of [0, 1, 2]) {
+      expect(resolveAuraPerformanceRoutine(match.seed!, round, slot, match.auraRoutines))
+        .toEqual(auraRoutines[slot][round]);
+    }
+    expect(isValidAuraChallengeMatch({ ...match, auraRoutines: [null, null] })).toBe(false);
+    expect(isValidAuraChallengeMatch({ ...match, auraRoutines: [auraRoutines[1], auraRoutines[0]] })).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, auraRoutines: [['aura_shrug'], null] }).ok).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, auraRoutines: [auraRoutines[0][0], null] }).ok).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, auraRoutines: [auraRoutines[0].flat(), null] }).ok).toBe(false);
+    expect(validateAuraChallenge({ ...challenge, rules: AURA_CHALLENGE_RULES }).ok).toBe(false);
+  });
+
   it('replays new Aura Plaza challenges and keeps older stages intact', () => {
     for (const stageId of ['aura-plaza-v3', 'aura-plaza-v2', 'aura-plaza', 'insert-player-arena'] as const) {
       const original = createAuraChallengeRoutine(1234, 'viral', DEFAULT_AURA_TRACK.id, stageId)!;

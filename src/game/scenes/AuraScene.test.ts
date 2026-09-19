@@ -19,9 +19,25 @@ import { AURA_PRESENTATION_EVENT, AURA_PRESENTATION_TURN_EVENT } from '../aura/A
 import { buildAuraChallengeMatch, createAuraChallenge, createAuraChallengeRoutine } from '../aura/AuraChallenge.ts';
 import { AURA_PLAZA_ASSET_PATH, DEFAULT_AURA_STAGE_ID, getStageTheme } from '../match/StageConfig.ts';
 import type { MatchSceneData } from '../match/MatchConfig.ts';
+import { AURA_BATTLE_COMPLETE_EVENT, AURA_REMATCH_CONFIG_EVENT } from '../match/MatchConfig.ts';
+import { getActiveOnlineSession, setActiveOnlineSession, type OnlineMatchSession } from '../net/onlineSession.ts';
+import type { PeerTransportState } from '../net/PeerTransport.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
 import type { LoadedAuraAnimationPack } from '../aura/AuraSpriteLoader.ts';
 import { AuraPerformanceView } from '../aura/AuraPerformanceView.ts';
+import { auraPerformanceAtBeat } from '../aura/AuraPerformance.ts';
+import type { AuraMatchSelection } from '../aura/AuraChoreography.ts';
+
+const P1_CHOREOGRAPHY: AuraMatchSelection = [
+  ['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
+  ['aura_glide', 'aura_one_leg', 'aura_mog_check'],
+  ['aura_floor_worm', 'aura_six_seven', 'aura_glide'],
+];
+const P2_CHOREOGRAPHY: AuraMatchSelection = [
+  ['aura_mog_check', 'aura_glide', 'aura_one_leg'],
+  ['aura_six_seven', 'aura_six_seven', 'aura_floor_worm'],
+  ['aura_one_leg', 'aura_floor_worm', 'aura_mog_check'],
+];
 
 const assetLoaders = vi.hoisted(() => ({ aura: vi.fn(), combat: vi.fn() }));
 vi.mock('../sprites/AiSpriteLoader.ts', () => ({ loadAiSprites: assetLoaders.combat }));
@@ -133,7 +149,7 @@ function harness(withPack = true) {
     canaryPerformanceOverride: 'aura_six_seven',
     noteById: new Map([['n1', { id: 'n1', beat: 0.5, turnIndex: 0 }]]),
     chart: { turns: [{ round: 0, slot: 0, startMs: 0, endMs: 10_000 }], beatMs: 500, beatOffsetMs: 0 },
-    matchSeed: 67, currentTurnIndex: 0, noteObjects: new Map(), lastMilestone: [0, 0],
+    matchSeed: 67, currentTurnIndex: 0, selectedPhraseProgress: [null, null], noteObjects: new Map(), lastMilestone: [0, 0],
     comicFeedback: { move: vi.fn(), judgement: vi.fn(), milestone: vi.fn(), beginTurn: vi.fn() },
     // Regression sentinels: none of the removed world/sprite feedback paths may run.
     spawnPerformanceSparks: vi.fn(), playAuraBurst: vi.fn(), dipSpotlight: vi.fn(),
@@ -288,6 +304,139 @@ describe('AuraScene loaded performer eligibility', () => {
 
 describe('AuraScene integrated presentation', () => {
   afterEach(() => vi.restoreAllMocks());
+
+  it('plays all nine chosen positions for each player across the real chart’s three rounds', () => {
+    const { scene, performance, waiting } = harness();
+    const routines = [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY];
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    Object.assign(scene, { canaryPerformanceOverride: null, matchData: { auraRoutines: routines },
+      chart, noteById: new Map(chart.notes.map(note => [note.id, note])) });
+    for (const note of chart.notes) {
+      scene.activePerformerSlot = note.slot;
+      scene.currentTurnIndex = note.turnIndex;
+      scene.animateFighterForJudgement({ grade: 'perfect', slot: note.slot, lane: note.lane, noteId: note.id });
+    }
+    for (const [slot, view] of [performance, waiting].entries()) {
+      expect(view.play.mock.calls).toEqual(chart.notes.filter(note => note.slot === slot)
+        .map(note => [auraPerformanceAtBeat(routines[slot][chart.turns[note.turnIndex].round], note.beat)]));
+      expect(new Set(chart.turns.filter(turn => turn.slot === slot).map(turn => turn.round)))
+        .toEqual(new Set([0, 1, 2]));
+    }
+    expect(scene.actionRecorder).toBeNull();
+    expect(scene.battle.scoreFor).not.toHaveBeenCalled();
+  });
+
+  it('uses the current chosen phrase on a mash at all nine positions without resampling the clock', () => {
+    const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    Object.assign(scene, { canaryPerformanceOverride: null,
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] }, chart });
+    for (const turn of chart.turns.filter(turn => turn.slot === 0)) {
+      scene.currentTurnIndex = turn.index;
+      for (const beat of [0, 6, 11]) {
+        scene.applyJudgement({ grade: 'mash', slot: 0, lane: 0, noteId: null, combo: 0 }, false,
+          turn.firstNoteMs + beat * chart.beatMs);
+      }
+    }
+    expect(performance.play.mock.calls).toEqual(P1_CHOREOGRAPHY.flat().map(move => [move]));
+    expect(performance.firstRoutineAnimation).not.toHaveBeenCalled();
+    expect(scene.soundManager.getBattleMusicClockSample).not.toHaveBeenCalled();
+  });
+
+  it.each([1, 2])('scores a delayed round-one note without replacing the same player’s round %i move', round => {
+    const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    const battle = new AuraBattle(chart);
+    const currentTurn = chart.turns.find(turn => turn.slot === 0 && turn.round === round)!;
+    const lateNote = chart.turns[0].notes[0];
+    Object.assign(scene, { chart, battle, canaryPerformanceOverride: null, activePerformerSlot: 0,
+      currentTurnIndex: currentTurn.index, noteById: new Map(chart.notes.map(note => [note.id, note])),
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] } });
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: currentTurn.notes[0].id });
+    expect(performance.play).toHaveBeenLastCalledWith(P1_CHOREOGRAPHY[round][0]);
+    performance.play.mockClear();
+    const judgement = battle.judgeNote(lateNote.id, 'great', 80)!;
+    scene.applyJudgement(judgement, false);
+    expect(battle.scoreFor(0).great).toBe(1);
+    expect(battle.scoreFor(0).score).toBeGreaterThan(0);
+    expect(scene.updateScoreUi).toHaveBeenCalledOnce();
+    expect(performance.play).not.toHaveBeenCalled();
+  });
+
+  it.each([6, 11])('scores and records older same-round network notes without rewinding the chosen phrase at beat %i', beat => {
+    const { scene, recorder, chart } = recordingHarness();
+    const turn = chart.turns[0];
+    const latest = turn.notes.find(note => note.beat === beat)!;
+    const older = turn.notes.filter(note => note.beat === 0 || (beat === 11 && note.beat === 6));
+    const atMs = latest.atMs + 30;
+    Object.assign(scene, { canaryPerformanceOverride: null, currentTurnIndex: turn.index,
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] },
+      online: { localSlot: 1, matchSerial: 7 } });
+    recorder.setRoutines([P1_CHOREOGRAPHY, null]);
+    scene.soundManager.getBattleMusicClockSample.mockReturnValue({ status: 'playing', positionMs: atMs,
+      durationMs: null, loop: false });
+    const deliver = (noteId: string) => scene.onOnlineControl({
+      t: 'aura_judgement', matchSerial: 7, noteId, grade: 'great', offsetMs: 30,
+    });
+    deliver(latest.id);
+    const view = scene.auraPerformanceViews[0];
+    expect(view.play).toHaveBeenLastCalledWith(auraPerformanceAtBeat(P1_CHOREOGRAPHY[0], beat));
+    view.play.mockClear();
+    scene.comicFeedback.move.mockClear();
+    older.forEach(note => deliver(note.id));
+    expect(view.play).not.toHaveBeenCalled();
+    expect(scene.comicFeedback.move).not.toHaveBeenCalled();
+    expect(scene.battle.scoreFor(0).great).toBe(older.length + 1);
+    expect(recorder.toRecording().events.map(event => event.judgement.noteId))
+      .toEqual([latest.id, ...older.map(note => note.id)]);
+    expect(recorder.toRecording().events.map(event => event.atMs)).toEqual(Array(older.length + 1).fill(atMs));
+  });
+
+  it('keeps an early next-phrase hit visible when a previous note misses, then permits the next round’s first phrase', () => {
+    const { scene, recorder, chart } = recordingHarness();
+    const turn = chart.turns[0];
+    const nextPhrase = turn.notes.find(note => note.beat === 6)!;
+    const oldNote = turn.notes.find(note => note.beat === 5)!;
+    Object.assign(scene, { canaryPerformanceOverride: null, currentTurnIndex: turn.index,
+      matchData: { auraRoutines: [P1_CHOREOGRAPHY, null] } });
+    recorder.setRoutines([P1_CHOREOGRAPHY, null]);
+    scene.applyJudgement(scene.battle.judgeNote(nextPhrase.id, 'great', -80), false, nextPhrase.atMs - 80);
+    const view = scene.auraPerformanceViews[0];
+    expect(view.play).toHaveBeenLastCalledWith(P1_CHOREOGRAPHY[0][1]);
+    view.play.mockClear();
+    scene.applyJudgement(scene.battle.judgeNote(oldNote.id, 'miss', 160), false, nextPhrase.atMs);
+    expect(view.play).not.toHaveBeenCalled();
+    expect(scene.battle.scoreFor(0).misses).toBe(1);
+    expect(recorder.toRecording().events.map(event => event.judgement.grade)).toEqual(['great', 'miss']);
+    const followingTurn = chart.turns.find(candidate => candidate.slot === 0 && candidate.round === 1)!;
+    scene.currentTurnIndex = followingTurn.index;
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: followingTurn.notes[0].id });
+    expect(view.play).toHaveBeenCalledExactlyOnceWith(P1_CHOREOGRAPHY[1][0]);
+  });
+
+  it('clears selected phrase progress when the same scene starts a fresh match', () => {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn(), location: { search: '' } });
+    const scene = new AuraScene() as unknown as Record<string, any>;
+    scene.init({ gameMode: 'aura', auraRoutines: [P1_CHOREOGRAPHY, null] });
+    scene.selectedPhraseProgress = [{ turnIndex: 0, phrase: 2 }, { turnIndex: 1, phrase: 1 }];
+    scene.init({ gameMode: 'aura', auraRoutines: [P1_CHOREOGRAPHY, null] });
+    expect(scene.selectedPhraseProgress).toEqual([null, null]);
+    vi.unstubAllGlobals();
+  });
+
+  it('preserves legacy unselected note-driven presentation when older feedback arrives', () => {
+    const { scene, performance } = harness();
+    const chart = createAuraChart(67, 'viral', DEFAULT_AURA_TRACK);
+    Object.assign(scene, { canaryPerformanceOverride: null, chart,
+      noteById: new Map(chart.notes.map(note => [note.id, note])) });
+    const latePhrase = chart.turns[0].notes.find(note => note.beat === 11)!;
+    const oldPhrase = chart.turns[0].notes[0];
+    scene.animateFighterForJudgement({ grade: 'perfect', slot: 0, lane: 0, noteId: latePhrase.id });
+    performance.play.mockClear();
+    scene.animateFighterForJudgement({ grade: 'miss', slot: 0, lane: 0, noteId: oldPhrase.id });
+    expect(performance.play).toHaveBeenCalledOnce();
+    expect(scene.selectedPhraseProgress).toEqual([null, null]);
+  });
 
   it.each(['perfect', 'great', 'good', 'miss', 'mash'])('keeps the selected Aura pack on %s and sends only UI feedback', grade => {
     const { scene, performance, waiting } = harness();
@@ -629,6 +778,196 @@ describe('AuraScene integrated presentation', () => {
   });
 });
 
+describe('AuraScene selected choreography readiness and replay', () => {
+  const local = P1_CHOREOGRAPHY;
+  const remote = P2_CHOREOGRAPHY;
+
+  function onlineHarness(localSlot: 0 | 1) {
+    const { scene } = harness();
+    const chart = createAuraChart(67, 'viral');
+    const actionRecorder = new AuraRecorder({ engineVersion: 'test', matchSeed: 67,
+      difficulty: 'viral', trackId: chart.trackId, stageId: DEFAULT_AURA_STAGE_ID,
+      p1Name: 'P1', p2Name: 'P2', chart });
+    Object.assign(scene, {
+      online: { localSlot, matchSerial: 3 },
+      onlineSession: { seat: localSlot === 0 ? 'host' : 'guest', transport: { sendControl: vi.fn(() => true) } },
+      localOnlineReady: true, remoteOnlineReady: false, onlineClockAnnounced: false,
+      clockStartedAt: null, scheduledClockStart: null, beginClock: vi.fn(), actionRecorder,
+      matchData: { auraRoutines: localSlot === 0 ? [local, null] : [null, local] },
+    });
+    return scene;
+  }
+
+  it.each([0, 1] as const)('advertises only local slot %i and records the peer’s complete ordered selection', localSlot => {
+    const scene = onlineHarness(localSlot);
+    scene.announceOnlineReady();
+    expect(scene.onlineSession.transport.sendControl).toHaveBeenCalledWith({ t: 'aura_ready', matchSerial: 3, routine: local });
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3, routine: remote });
+    const expected = localSlot === 0 ? [local, remote] : [remote, local];
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(expected);
+    expect(scene.remoteOnlineReady).toBe(true);
+    const controls = scene.onlineSession.transport.sendControl.mock.calls.length;
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3, routine: local });
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.onlineSession.transport.sendControl.mock.calls).toHaveLength(controls);
+  });
+
+  it('accepts a legacy peer’s omitted routine as seeded and rejects invalid or stale selections', () => {
+    const scene = onlineHarness(0);
+    for (const message of [
+      { t: 'aura_ready', matchSerial: 2, routine: remote },
+      { t: 'aura_ready', matchSerial: 3, routine: ['aura_shrug', 'aura_glide', 'aura_glide'] },
+      { t: 'aura_ready', matchSerial: 3, routine: ['aura_glide'] },
+      { t: 'aura_ready', matchSerial: 3, routine: ['aura_glide', 'aura_glide', 'aura_one_leg'] },
+      { t: 'aura_ready', matchSerial: 3, routine: remote.flat() },
+      { t: 'aura_ready', matchSerial: 3, routine: [remote[0], remote[1]] },
+    ]) scene.onOnlineControl(message);
+    expect(scene.remoteOnlineReady).toBe(false);
+    expect(scene.matchData.auraRoutines).toEqual([local, null]);
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3 });
+    expect(scene.remoteOnlineReady).toBe(true);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual([local, null]);
+  });
+
+  it('answers a later-ready peer once, so time spent in the editor cannot lose the handshake', () => {
+    const scene = onlineHarness(0);
+    scene.announceOnlineReady(); // The peer may still be choosing and have no AuraScene listener.
+    expect(scene.beginClock).not.toHaveBeenCalled();
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3, routine: remote });
+    expect(scene.onlineSession.transport.sendControl.mock.calls.map(([value]: any[]) => value.t))
+      .toEqual(['aura_ready', 'aura_ready', 'aura_start']);
+    expect(scene.beginClock).toHaveBeenCalledOnce();
+  });
+
+  it.each(['run_it_back', 'remix'])('preserves both chosen sequences on %s', action => {
+    const { scene } = harness();
+    Object.assign(scene, { online: null, actionCommitted: false, remix: 0,
+      matchData: { gameMode: 'aura', auraRoutines: [local, remote] },
+      track: DEFAULT_AURA_TRACK, difficultyId: 'viral', scene: { restart: vi.fn() }, setMatchActionsVisible: vi.fn() });
+    scene.performAction(action);
+    expect(scene.scene.restart).toHaveBeenCalledWith(expect.objectContaining({ auraRoutines: [local, remote] }));
+  });
+});
+
+describe('AuraScene online startup departure', () => {
+  afterEach(() => { setActiveOnlineSession(null); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function departureHarness(phase: PeerTransportState['phase'] = 'connected') {
+    vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+    let control: (value: unknown) => void = () => {};
+    let updateState: (value: PeerTransportState) => void = () => {};
+    const state: PeerTransportState = { phase, peerPresent: phase === 'connected', path: 'relay',
+      seat: 'host', roomCode: 'ABC234', rttMs: null, p2pAvailable: false, error: null };
+    const transport = {
+      close: vi.fn(), sendControl: vi.fn(() => true),
+      onControl: vi.fn((listener: typeof control) => { control = listener; return vi.fn(); }),
+      onState: vi.fn((listener: typeof updateState) => { updateState = listener; listener(state); return vi.fn(); }),
+    };
+    const session = { transport, roomCode: 'ABC234', seat: 'host', localSlot: 0,
+      inputDelay: 3, fighterIds: [null, null] } as unknown as OnlineMatchSession;
+    setActiveOnlineSession(session);
+    const scene = Object.assign(new AuraScene() as unknown as Record<string, any>, {
+      online: { roomCode: 'ABC234', localSlot: 0, matchSerial: 1, inputDelay: 3 },
+      matchData: {}, lifecycleEpoch: 4, lifecycleActive: true,
+      startupAbort: new AbortController(), exitToMenu: vi.fn(), beginFinalization: vi.fn(),
+      presentationReady: true, presentationStarted: true,
+      soundManager: { stopBattleMusic: vi.fn(), startAuraCrowd: vi.fn(), startBattleMusic: vi.fn() },
+      time: { delayedCall: vi.fn() },
+    });
+    return { scene, transport, state, control: (value: unknown) => control(value),
+      updateState: (value: PeerTransportState) => updateState(value) };
+  }
+
+  it.each(['closed', 'error', 'waiting_peer'] as const)('leaves when a rival already departed during the editor handoff: %s', phase => {
+    const { scene, transport } = departureHarness(phase);
+    expect(scene.attachOnlineSession(scene.online)).toBe(false);
+    expect(scene.opponentLeft).toBe(true);
+    expect(scene.exitToMenu).toHaveBeenCalledOnce();
+    expect(transport.close).toHaveBeenCalledOnce();
+    expect(getActiveOnlineSession()).toBeNull();
+    expect(scene.startupAbort.signal.aborted).toBe(true);
+    expect(scene.isCurrentLifecycle(4)).toBe(false);
+    expect(scene.beginFinalization).not.toHaveBeenCalled();
+  });
+
+  it.each(['quit', 'disconnect'])('cancels a pre-clock startup on %s and never runs a delayed countdown callback', departure => {
+    const { scene, transport, state, control, updateState } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    scene.localOnlineReady = true;
+    scene.beginClock(3_000);
+    const start = scene.time.delayedCall.mock.calls[0][1];
+    if (departure === 'quit') control({ t: 'quit' });
+    else updateState({ ...state, phase: 'waiting_peer', peerPresent: false });
+    start();
+    control({ t: 'quit' }); // A closing transport may also report its peer's quit.
+    expect(scene.exitToMenu).toHaveBeenCalledOnce();
+    expect(transport.close).toHaveBeenCalledOnce();
+    expect(scene.clockStartedAt).toBeNull();
+    expect(scene.scheduledClockStart).toBeNull();
+    expect(scene.soundManager.startBattleMusic).not.toHaveBeenCalled();
+    expect(scene.beginFinalization).not.toHaveBeenCalled();
+    scene.beginClock(0);
+    expect(scene.time.delayedCall).toHaveBeenCalledOnce();
+  });
+
+  it('finishes a started battle on departure and leaves startup navigation unused', () => {
+    const { scene, state, updateState } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    scene.clockStartedAt = 100;
+    updateState({ ...state, phase: 'waiting_peer', peerPresent: false });
+    expect(scene.beginFinalization).toHaveBeenCalledOnce();
+    expect(scene.exitToMenu).not.toHaveBeenCalled();
+    expect(scene.startupAbort.signal.aborted).toBe(false);
+  });
+
+  it('ignores gameplay and rematch packets before initialization while still accepting readiness and quit', () => {
+    const { scene, control } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    const score = { score: 0, combo: 0, bestCombo: 0, perfect: 0, great: 0, good: 0, misses: 0, mashes: 0 };
+    Object.assign(scene, { presentationReady: false, presentationStarted: false,
+      maybeStartOnlineRematch: vi.fn(), restartOnlineMatch: vi.fn() });
+    expect(scene.battle).toBeUndefined();
+    expect(() => {
+      for (const presentationReady of [false, true]) {
+        scene.presentationReady = presentationReady;
+        scene.presentationStarted = presentationReady;
+        control({ t: 'aura_judgement', matchSerial: 1, noteId: 'not-created', grade: 'perfect', offsetMs: 0 });
+        control({ t: 'aura_finish', matchSerial: 1, score });
+        control({ t: 'rematch_ready', previousMatchSerial: 1 });
+        control({ t: 'rematch_start', previousMatchSerial: 1, matchSerial: 2, seed: 67 });
+      }
+    }).not.toThrow();
+    expect(scene.remoteFinalScore).toBeNull();
+    expect(scene.remoteRematchReady).toBe(false);
+    expect(scene.maybeStartOnlineRematch).not.toHaveBeenCalled();
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control({ t: 'aura_ready', matchSerial: 1, routine: P2_CHOREOGRAPHY });
+    expect(scene.remoteOnlineReady).toBe(true);
+    control({ t: 'quit' });
+    expect(scene.exitToMenu).toHaveBeenCalledOnce();
+  });
+
+  it('accepts a new rematch serial only after the completed guest explicitly agrees', () => {
+    const { scene, control } = departureHarness();
+    expect(scene.attachOnlineSession(scene.online)).toBe(true);
+    scene.onlineSession.seat = 'guest';
+    Object.assign(scene, { finalizing: true, matchFinished: true, localRematchReady: false,
+      restartOnlineMatch: vi.fn(), maybeStartOnlineRematch: vi.fn() });
+    const start = { t: 'rematch_start', previousMatchSerial: 1, matchSerial: 2, seed: 67 };
+    control(start);
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control({ t: 'rematch_ready', previousMatchSerial: 1 });
+    expect(scene.remoteRematchReady).toBe(true);
+    scene.localRematchReady = true;
+    for (const invalid of [{ ...start, previousMatchSerial: 0 }, { ...start, matchSerial: 1 },
+      { ...start, seed: -1 }, { ...start, seed: 0x1_0000_0000 }]) control(invalid);
+    expect(scene.restartOnlineMatch).not.toHaveBeenCalled();
+    control(start);
+    expect(scene.restartOnlineMatch).toHaveBeenCalledExactlyOnceWith(2, 67);
+  });
+});
+
 function recordingHarness() {
   const { scene } = harness();
   const chart = createAuraChart(67, 'viral');
@@ -636,6 +975,7 @@ function recordingHarness() {
     trackId: chart.trackId, difficulty: chart.difficulty, stageId: 'mars-incorporated',
     p1Name: 'P1', p2Name: 'P2', chart });
   Object.assign(scene, { chart, actionRecorder: recorder, battle: new AuraBattle(chart),
+    lifecycleActive: true, presentationReady: true, presentationStarted: true,
     isVsAI: false, cpuVsCpu: false, online: null, finalizing: false,
     noteById: new Map(chart.notes.map(note => [note.id, note])),
     lastWrongTurnFeedbackAt: -Infinity, flashLaneInput: vi.fn(),
@@ -1162,6 +1502,8 @@ describe('AuraScene responsive whole-rig layout', () => {
     Object.assign(scene, {
       chart, battle, track: DEFAULT_AURA_TRACK, difficultyId: 'viral', resolvedStageId: DEFAULT_AURA_STAGE_ID,
       stageLabel: 'AURA PLAZA', p1Name: 'P1', p2Name: 'P2', customStageKey: null,
+      matchData: { gameMode: 'aura', p1Name: 'P1', p2Name: 'P2', p1PhotoHash: 'private-local-photo',
+        auraRoutines: [P1_CHOREOGRAPHY, null] },
       turnText: controlText(), phaseText: controlText(), comboText: controlText(), lifecycleEpoch: 1, captureId: 'finale-test',
       online: null, isVsAI: true, cpuVsCpu: false, videoRecorder: null,
       cameraFocusSlot: 1, cameraFromSlot: winner === 'p1' && !reducedMotion ? 0 : 1, reduceMotion: reducedMotion,
@@ -1200,7 +1542,12 @@ describe('AuraScene responsive whole-rig layout', () => {
     expect(scene.finaleLabels.map((label: ReturnType<typeof controlText>) => label.text))
       .toEqual(winner === 'draw' ? ['DRAW', 'DRAW'] : winner === 'p1' ? ['VICTORY', 'DEFEAT'] : ['DEFEAT', 'VICTORY']);
     expect(scene.finaleLabels.every((label: ReturnType<typeof controlText>) => label.visible)).toBe(true);
-    expect(dispatchEvent.mock.calls[0][0].detail.winnerSlot).toBe(winner);
+    const rematch = dispatchEvent.mock.calls.find(([event]) => event.type === AURA_REMATCH_CONFIG_EVENT)![0].detail;
+    expect(rematch).toEqual({ ...scene.matchData, vsAI: true, cpuVsCpu: false,
+      seed: 67, auraTrackId: DEFAULT_AURA_TRACK.id, auraDifficulty: 'viral', stageId: DEFAULT_AURA_STAGE_ID });
+    const result = dispatchEvent.mock.calls.find(([event]) => event.type === AURA_BATTLE_COMPLETE_EVENT)![0].detail;
+    expect(result.winnerSlot).toBe(winner);
+    expect(JSON.stringify(result)).not.toContain('private-local-photo');
     scene.advanceFighterPresentation(1 / 60);
     for (const slot of [0, 1] as const) {
       const placement = scene.cameraComposition().performers[slot];
@@ -1615,6 +1962,8 @@ describe('AuraScene visible presentation handshake', () => {
     return Object.assign(new AuraScene(), harness().scene, {
       lifecycleActive: true, presentationReady: true, presentationStarted: false,
       presentationToken: 41, matchSeed: 67, localOnlineReady: false, online: null,
+      clockStartedAt: null, scheduledClockStart: null,
+      track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID,
       startupView: { render: vi.fn() },
       beginClock: vi.fn(), announceOnlineReady: vi.fn(), prepareStartup: vi.fn(),
       soundManager: { unlockPreparedMedia: vi.fn().mockResolvedValue(true) },
@@ -1779,6 +2128,149 @@ describe('AuraScene visible presentation handshake', () => {
     expect(scene.emitPresentationTurn).not.toHaveBeenCalled();
   });
 
+  function customizationHarness() {
+    const scene = handshakeHarness();
+    const chart = createAuraChart(67, 'viral');
+    Object.assign(scene, {
+      matchData: { gameMode: 'aura', auraRoutines: [P2_CHOREOGRAPHY, null] },
+      chart,
+      actionRecorder: new AuraRecorder({ engineVersion: 'test', matchSeed: 67,
+        difficulty: 'viral', trackId: chart.trackId, stageId: DEFAULT_AURA_STAGE_ID,
+        p1Name: 'P1', p2Name: 'P2', chart, auraRoutines: [P2_CHOREOGRAPHY, null] }),
+    });
+    scene.onPresentationStart({ detail: { token: 41, seed: 67 } });
+    return scene;
+  }
+
+  it.each([false, true])('commits both offline selections before media unlock and clones all nine positions, vsAI=%s', async vsAI => {
+    const scene = customizationHarness();
+    scene.isVsAI = vsAI;
+    const selected = [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY].map(match => match.map(round => [...round]));
+    scene.soundManager.unlockPreparedMedia.mockImplementation(() => {
+      expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+      expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(scene.matchData.auraRoutines);
+      expect(scene.actionRecorder.toRecording().events).toEqual([]);
+      return Promise.resolve(true);
+    });
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: selected } });
+    selected[0][2][1] = 'aura_one_leg';
+    selected[1][0][0] = 'aura_floor_worm';
+    expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    await Promise.resolve();
+    expect(scene.prepareStartup).toHaveBeenCalledOnce();
+  });
+
+  it.each([undefined, [null, null]])('keeps optional customization compatible with predefined routines: %o', auraRoutines => {
+    const scene = customizationHarness();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines } });
+    const expected = auraRoutines === undefined ? [P2_CHOREOGRAPHY, null] : [null, null];
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(expected);
+    expect(scene.soundManager.unlockPreparedMedia).toHaveBeenCalledOnce();
+  });
+
+  it.each([0, 1] as const)('commits only local seat %i after the peer becomes ready during customization', localSlot => {
+    const scene = customizationHarness();
+    Object.assign(scene, {
+      online: { localSlot, matchSerial: 3 },
+      onlineSession: { seat: localSlot === 0 ? 'host' : 'guest', transport: { sendControl: vi.fn(() => true) } },
+      remoteOnlineReady: false,
+    });
+    delete scene.announceOnlineReady;
+    scene.onOnlineControl({ t: 'aura_ready', matchSerial: 3, routine: P2_CHOREOGRAPHY });
+    expect(scene.remoteOnlineReady).toBe(true);
+    expect(scene.localOnlineReady).toBe(false);
+    expect(scene.onlineSession.transport.sendControl).not.toHaveBeenCalled();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, P1_CHOREOGRAPHY] } });
+    const expected = localSlot === 0 ? [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] : [P2_CHOREOGRAPHY, P1_CHOREOGRAPHY];
+    expect(scene.matchData.auraRoutines).toEqual(expected);
+    expect(scene.actionRecorder.toRecording().config.auraRoutines).toEqual(expected);
+    expect(scene.onlineSession.transport.sendControl).not.toHaveBeenCalled();
+    scene.localOnlineReady = true; // Only the completed intro may advertise readiness.
+    scene.announceOnlineReady();
+    expect(scene.onlineSession.transport.sendControl).toHaveBeenCalledWith({
+      t: 'aura_ready', matchSerial: 3, routine: P1_CHOREOGRAPHY,
+    });
+  });
+
+  it.each([
+    { label: 'stale token', state: {}, detail: { token: 40 } },
+    { label: 'stale seed', state: {}, detail: { seed: 68 } },
+    { label: 'paused', state: { paused: true } },
+    { label: 'opponent departed', state: { opponentLeft: true } },
+    { label: 'already ready online', state: { localOnlineReady: true } },
+    { label: 'scheduled clock', state: { scheduledClockStart: 1500 } },
+    { label: 'running clock', state: { clockStartedAt: 0 } },
+    { label: 'completed match', state: { matchFinished: true } },
+    { label: 'finalizing match', state: { finalizing: true } },
+    { label: 'leaving match', state: { actionCommitted: true } },
+    { label: 'already preparing', state: { awaitingStartInput: false } },
+    { label: 'spectator', state: { cpuVsCpu: true } },
+    { label: 'saved challenge', state: { matchData: { auraChallenge: {} } } },
+    { label: 'missing player slot', state: {}, detail: { auraRoutines: [P1_CHOREOGRAPHY] } },
+    { label: 'old flat selection', state: {}, detail: { auraRoutines: [P1_CHOREOGRAPHY[0], null] } },
+    { label: 'invalid other slot', state: { online: { localSlot: 0 } }, detail: { auraRoutines: [P1_CHOREOGRAPHY, []] } },
+    { label: 'null payload', state: {}, detail: { auraRoutines: null } },
+  ])('rejects $label before changing choreography, recording or startup', ({ state, detail }) => {
+    const scene = Object.assign(customizationHarness(), state);
+    const previous = structuredClone(scene.matchData);
+    const recording = scene.actionRecorder.toRecording();
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, null], ...detail } });
+    expect(scene.matchData).toEqual(previous);
+    expect(scene.actionRecorder.toRecording()).toEqual(recording);
+    expect(scene.soundManager.unlockPreparedMedia).not.toHaveBeenCalled();
+    expect(scene.prepareStartup).not.toHaveBeenCalled();
+  });
+
+  it('allows the normal Start gesture for a saved challenge without optional changes', () => {
+    const scene = customizationHarness();
+    scene.matchData.auraChallenge = {};
+    scene.onStartupReady({ detail: { token: 41, seed: 67 } });
+    expect(scene.matchData.auraRoutines).toEqual([P2_CHOREOGRAPHY, null]);
+    expect(scene.soundManager.unlockPreparedMedia).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('publishes current match configuration before awaiting input, online=%s', online => {
+    const scene = handshakeHarness();
+    const dispatchEvent = vi.mocked(window.dispatchEvent);
+    Object.assign(scene, {
+      p1Name: 'Current player', p2Name: 'Current rival', matchSeed: 987,
+      matchData: { gameMode: 'aura', seed: 12, p1Name: 'Old player', p2Name: 'Old rival',
+        p1PhotoHash: 'retained-local-photo', auraRoutines: [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] },
+      online: online ? { localSlot: 1, matchSerial: 4 } : null,
+    });
+    scene.awaitStartupGesture();
+    const [configEvent, startupEvent] = dispatchEvent.mock.calls.slice(-2).map(([event]) => event as CustomEvent);
+    expect(configEvent.type).toBe(AURA_REMATCH_CONFIG_EVENT);
+    expect(configEvent.detail).toMatchObject({ gameMode: 'aura', seed: 987,
+      p1Name: 'Current player', p2Name: 'Current rival', p1PhotoHash: 'retained-local-photo',
+      auraTrackId: DEFAULT_AURA_TRACK.id, auraDifficulty: 'viral', stageId: DEFAULT_AURA_STAGE_ID,
+      auraRoutines: [P1_CHOREOGRAPHY, P2_CHOREOGRAPHY] });
+    expect(configEvent.detail.online).toEqual(scene.online ?? undefined);
+    expect(startupEvent.type).toBe(AURA_STARTUP_EVENT);
+    expect(startupEvent.detail).toMatchObject({ seed: 987, phase: 'awaiting-input' });
+    configEvent.detail.auraRoutines[0][1][0] = 'aura_floor_worm';
+    expect(scene.matchData.auraRoutines).toEqual([P1_CHOREOGRAPHY, P2_CHOREOGRAPHY]);
+    if (online) {
+      configEvent.detail.online.matchSerial = 999;
+      expect(scene.online.matchSerial).toBe(4);
+    }
+  });
+
+  it('publishes applied selections again if blocked audio asks for another Start gesture', async () => {
+    const scene = customizationHarness();
+    scene.soundManager.unlockPreparedMedia.mockResolvedValue(false);
+    scene.onStartupReady({ detail: { token: 41, seed: 67, auraRoutines: [P1_CHOREOGRAPHY, null] } });
+    await Promise.resolve();
+    expect(scene.awaitingStartInput).toBe(true);
+    const events = vi.mocked(window.dispatchEvent).mock.calls.map(([event]) => event as CustomEvent);
+    expect(events.at(-2)?.type).toBe(AURA_REMATCH_CONFIG_EVENT);
+    expect(events.at(-2)?.detail.auraRoutines).toEqual([P1_CHOREOGRAPHY, null]);
+    expect(events.at(-1)?.detail.phase).toBe('awaiting-input');
+    expect(scene.prepareStartup).not.toHaveBeenCalled();
+  });
+
   it.each([0, 1])('does not advertise online readiness before the real Ready gesture and intro, for player %i', localSlot => {
     const scene = Object.assign(handshakeHarness(), { online: { localSlot, matchSerial: 3 } });
     scene.onPresentationStart({ detail: { token: 40, seed: 67 } });
@@ -1894,7 +2386,8 @@ describe('AuraScene asynchronous challenge ownership', () => {
   it('retries P2 at the exact music times, then remixes with the recipient identity still human', () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal('window', { dispatchEvent, location: { search: '' } });
-    const routine = createAuraChallengeRoutine(987, 'viral', 'neon-arena', 'insert-player-arena')!;
+    const auraRoutines = [P2_CHOREOGRAPHY, P1_CHOREOGRAPHY] as const;
+    const routine = createAuraChallengeRoutine(987, 'viral', 'neon-arena', 'insert-player-arena', auraRoutines)!;
     const challenge = createAuraChallenge(routine, 'Sender', 1_000, 1);
     const match = { ...buildAuraChallengeMatch(challenge), p2Name: 'Recipient', p2PhotoHash: 'own-photo',
       p2CloudFighterId: 'own-fighter', p2PersonalityId: 'showboat' as const };
@@ -1910,16 +2403,29 @@ describe('AuraScene asynchronous challenge ownership', () => {
     scene.performAction('run_it_back');
     const retry = restart.mock.calls[0][0];
     expect(retry).toMatchObject({ auraChallenge: challenge, seed: 987, auraTrackId: 'neon-arena', p2PhotoHash: 'own-photo' });
+    expect(retry.auraRoutines).toEqual(auraRoutines);
     scene.init(retry);
     expect(scene.localControlledSlot()).toBe(1);
+    Object.assign(scene, { track: { id: retry.auraTrackId }, resolvedStageId: retry.stageId });
+    scene.awaitStartupGesture();
+    expect(dispatchEvent.mock.calls.at(-2)![0].detail).toMatchObject({
+      seed: 987, auraTrackId: 'neon-arena', p2Name: 'Recipient', auraChallenge: challenge, auraRoutines,
+    });
     scene.performAction('remix');
     const remix = restart.mock.calls[1][0];
     expect(remix.auraChallenge).toBeUndefined(); expect(remix.seed).not.toBe(987);
     expect(remix).toMatchObject({ p1Name: 'Recipient', p1PhotoHash: 'own-photo', p1CloudFighterId: 'own-fighter', p1PersonalityId: 'showboat', p2Name: 'BYTE' });
     expect(remix.p2PhotoHash).toBeUndefined();
+    expect(remix.auraRoutines).toEqual([auraRoutines[1], auraRoutines[0]]);
     scene.init(remix);
     expect(scene.isCpuSlot(0)).toBe(false); expect(scene.isCpuSlot(1)).toBe(true);
     expect(scene.localControlledSlot()).toBe(0);
+    Object.assign(scene, { track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID });
+    scene.awaitStartupGesture();
+    const remixConfig = dispatchEvent.mock.calls.at(-2)![0].detail;
+    expect(remixConfig).toMatchObject({ seed: remix.seed, p1Name: 'Recipient', p2Name: 'BYTE',
+      auraTrackId: DEFAULT_AURA_TRACK.id, auraRoutines: [auraRoutines[1], auraRoutines[0]] });
+    expect(remixConfig.auraChallenge).toBeUndefined();
     const slots = dispatchEvent.mock.calls.map(([event]) => event).filter(event => event.type === AURA_PRESENTATION_EVENT)
       .map(event => event.detail.localControlledSlot);
     expect(slots).toEqual([1, 1, 0]);
@@ -1936,6 +2442,7 @@ describe('AuraScene first-play practice isolation', () => {
       lifecycleActive: true, presentationReady: true, presentationStarted: true,
       presentationToken: 41, matchSeed: 67, isVsAI: true, cpuVsCpu: false, online: null,
       matchData: { gameMode: 'aura', vsAI: true },
+      track: DEFAULT_AURA_TRACK, resolvedStageId: DEFAULT_AURA_STAGE_ID,
       clockStartedAt: null, scheduledClockStart: null, paused: false, finalizing: false,
       onboarding: new AuraOnboarding(), onboardingGraphics: { ...controlGraphics(), destroy: vi.fn() },
       lastOnboardingState: null, phaseText: controlText(), turnText: controlText(), highwayTitleText: controlText(), highwayMetaText: controlText(),

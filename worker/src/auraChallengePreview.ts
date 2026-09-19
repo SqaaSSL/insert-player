@@ -1,5 +1,11 @@
 import { AURA_CHALLENGE_ASSETS } from '../../src/game/aura/AuraChallengeAssets';
 
+// Public transport allowlist, kept independent of game runtime imports.
+const ROUTINE_NAMES = ['aura_six_seven', 'aura_mog_check', 'aura_glide', 'aura_floor_worm', 'aura_one_leg'] as const;
+type AuraPreviewGesture = typeof ROUTINE_NAMES[number];
+type AuraPreviewRoutine = readonly [AuraPreviewGesture, AuraPreviewGesture, AuraPreviewGesture];
+type AuraPreviewMatch = readonly [AuraPreviewRoutine, AuraPreviewRoutine, AuraPreviewRoutine];
+
 /** Public transport only. The game validates the current rules and score ceiling
  * before play; a preview is never evidence of a verified or ranked result. */
 export interface AuraChallengePreview {
@@ -15,9 +21,23 @@ export interface AuraChallengePreview {
   name: string;
   score: number;
   slot: 0 | 1;
+  auraRoutines?: readonly [AuraPreviewMatch | null, AuraPreviewMatch | null];
 }
 
 const KEYS = ['version', 'rules', 'seed', 'difficulty', 'trackId', 'trackVersion', 'stageId', 'stageVersion', 'chartId', 'name', 'score', 'slot'];
+
+function isAuraPreviewRoutines(value: unknown): value is NonNullable<AuraChallengePreview['auraRoutines']> {
+  return Array.isArray(value) && value.length === 2
+    && [0, 1].every(slot => {
+      const rounds = value[slot];
+      return rounds === null || (Array.isArray(rounds) && rounds.length === 3
+        && [0, 1, 2].every(round => {
+          const moves = rounds[round];
+          return Array.isArray(moves) && moves.length === 3
+            && [0, 1, 2].every(move => ROUTINE_NAMES.includes(moves[move]));
+        }));
+    });
+}
 
 export function decodeAuraChallengePreview(token: string): AuraChallengePreview | null {
   if (!token || token.length > 2048 || !/^[A-Za-z0-9_-]+$/.test(token)) return null;
@@ -26,7 +46,9 @@ export function decodeAuraChallengePreview(token: string): AuraChallengePreview 
     const json = new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
     const value = JSON.parse(json);
     if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).length !== KEYS.length || Object.keys(value).some(key => !KEYS.includes(key))
+      || Object.keys(value).length !== KEYS.length + ('auraRoutines' in value ? 1 : 0)
+      || Object.keys(value).some(key => !KEYS.includes(key) && key !== 'auraRoutines')
+      || ('auraRoutines' in value && !isAuraPreviewRoutines(value.auraRoutines))
       || JSON.stringify(value) !== json
       || btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') !== token
       || value.version !== 1 || typeof value.rules !== 'string' || !/^aura-1-[a-f0-9]{16}$/.test(value.rules)
