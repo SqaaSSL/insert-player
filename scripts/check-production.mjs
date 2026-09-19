@@ -2083,9 +2083,13 @@ function assertCrossDeviceRosterImportIsWired() {
     'function fetchOptionalBlob',
     'Optional asset skipped',
     'Sprite skipped',
+    'const spriteVersions = cloudSpritesForImport(fighter, options)',
     'const spritePlan = buildSpriteDownloadPlan(spriteVersions, localFingerprints, options)',
-    'const playableRefs = cloudPlayableSpriteRefs(spriteVersions)',
+    'const playableRefs = cloudPlayableSpriteRefs(fighter.sprites)',
+    'const requestedRefs = cloudPlayableSpriteRefs(spriteVersions)',
     'selectPlayableCachedSprites(refreshedVersions, playableRefs)',
+    'Object.values(requestedRefs).every((ref) =>',
+    'resolveFighterModeReadiness(exactPlayableSprites, options.gameMode, fighter)',
     'remoteRosterComplete && allRemoteCurrentSpritesAvailable',
     'await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope)',
     'const initialPlayableRefs = fingerprintedPlayableSpriteRefs(',
@@ -2129,6 +2133,20 @@ function assertCrossDeviceRosterImportIsWired() {
   const combined = `${cloud}\n${gallery}\n${roster}\n${cloudFirstRename}\n${cloudFirstDelete}`;
   const foundForbidden = forbidden.filter((snippet) => combined.includes(snippet));
   const missing = required.filter((snippet) => !combined.includes(snippet));
+  const preparationStart = roster.indexOf('export async function prepareRosterFighters(');
+  const preparationEnd = roster.indexOf('\nfunction getModeMeta(', preparationStart);
+  const preparation = preparationStart >= 0 && preparationEnd > preparationStart
+    ? roster.slice(preparationStart, preparationEnd) : '';
+  const requiredPreparation = [
+    'return withApiRequestTimeout(async (signal) => {',
+    'const upgraded = await Promise.all(selected.map(async (fighter) => {',
+    'await downloadArcadeFighterToLocal(fighter.cloud, context, {',
+    'gameMode,',
+    'includeSourceAssets: false,',
+    'signal,',
+    'assertFighterReadyForMode(playableSprites, fighter.name, gameMode, cachedMeta)',
+  ];
+  missing.push(...requiredPreparation.filter((snippet) => !preparation.includes(snippet)));
   if (missing.length > 0 || foundForbidden.length > 0) {
     throw new Error([
       missing.length > 0 ? `missing cross-device cloud roster import/play wiring: ${missing.join(', ')}` : '',
@@ -3070,7 +3088,13 @@ function assertLocalCachePreservesSpriteVersions() {
     "it('rejects a stale write after the active Clerk user changes'",
     'spriteVersions?: CloudSprite[]',
     'Archived sprite versions cannot be imported into the playable cache',
-    'return selectPlayableCloudSprites(fighter.sprites)',
+    'const sprites = selectPlayableCloudSprites(fighter.sprites)',
+    'if (!options.gameMode) return sprites',
+    "options.gameMode === 'aura'",
+    "[...AURA_LOADABLE_ANIMATION_NAMES, 'idle', 'victory', 'ko']",
+    'return sprites.filter((sprite) => needed.has(sprite.animationName))',
+    'const playableRefs = cloudPlayableSpriteRefs(fighter.sprites)',
+    'const requestedRefs = cloudPlayableSpriteRefs(spriteVersions)',
     'preserveVersionId: Boolean(sprite.id)',
     'buildSpriteUploadPlan(',
     'created.fighter?.spriteVersions ?? []',
