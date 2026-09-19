@@ -567,7 +567,7 @@ export function HomePage({
             ) : null}
           </div>
         </div>
-      </section> : <details className="creation-advanced"><summary>Playtest diagnostics on this device</summary><p>These events stay in this browser. Export them to review completion, sharing and creation time during a playtest. They contain no names, photos or challenge links.</p><Button onClick={() => downloadBlob(new Blob([JSON.stringify(readProductEvents(), null, 2)], { type: 'application/json' }), 'insert-player-playtest.json')}>Export diagnostics</Button></details>}
+      </section> : <details className="creation-advanced"><summary>Playtest diagnostics on this device</summary><p>This detailed log stays in this browser. Anonymous daily totals also help us check the onboarding. Export the log to review completion, sharing and creation time during a playtest. It contains no names, photos or challenge links.</p><Button onClick={() => downloadBlob(new Blob([JSON.stringify(readProductEvents(), null, 2)], { type: 'application/json' }), 'insert-player-playtest.json')}>Export diagnostics</Button></details>}
     </div>
   );
 }

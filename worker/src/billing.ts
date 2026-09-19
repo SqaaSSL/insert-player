@@ -41,6 +41,7 @@ import { atlasAnimationPlan, requestedGenerationRenderer, rendererMatchesTier, s
 import { type GenerationRendererVersion, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 import { meterkeyBaseUrl } from './geminiTransport';
 import { canManageCrew } from './crewAuthorization';
+import { crewStageEligibilityError, getCrewStageEligibility } from './crewStageEligibility';
 
 const FREE_ROOKIE_GENERATION_LIMIT = 1;
 const GENERATION_RESERVATION_TTL_HOURS = 12;
@@ -1665,6 +1666,9 @@ export async function authorizeStageForgePurchase(
           : 'crew_stage_reserved',
       }, 409);
     }
+
+    const eligibilityError = crewStageEligibilityError(await getCrewStageEligibility(env, organizationId));
+    if (eligibilityError) return eligibilityError;
 
     const purchaseId = generateId();
     const ledgerId = generateId();

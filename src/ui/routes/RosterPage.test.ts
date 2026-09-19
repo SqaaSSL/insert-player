@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as CloudFighters from '../../services/CloudFighters.ts';
+import * as SpriteCache from '../../services/SpriteCache.ts';
 import type { CloudFighter } from '../../services/CloudFighters.ts';
 import type { CachedMeta } from '../../services/SpriteCache.ts';
 import { AURA_ANIMATION_NAMES } from '../../services/FighterAssetPacks.ts';
@@ -6,6 +8,7 @@ import { PLAYABLE_ANIMATION_NAMES } from '../../services/PlayableFighterAssets.t
 import {
   buildRosterFighterSections,
   filterRosterFighterSectionsForMode,
+  prepareRosterFighters,
 } from './RosterPage.tsx';
 
 function fighter(id: string, slug: string, name: string): CloudFighter {
@@ -176,5 +179,55 @@ describe('RosterPage fighter sections', () => {
     const sections = filterRosterFighterSectionsForMode(buildRosterFighterSections([...cached, renamed], [], true), 'aura');
     expect(sections.official.map((entry) => entry.photoHash)).toEqual(cached.map(entry => entry.photoHash));
     expect(sections.owned).toEqual([]);
+  });
+});
+
+describe('RosterPage match preparation', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('prepares both players concurrently and only once when both slots share a fighter', async () => {
+    const entries = buildRosterFighterSections([], [globals[0], globals[2]]).official;
+    const release: Array<() => void> = [];
+    const download = vi.spyOn(CloudFighters, 'downloadArcadeFighterToLocal').mockImplementation(async (cloud, _context, options) => {
+      await new Promise<void>((resolve) => release.push(resolve));
+      options?.onProgress?.({ phase: 'ready', completed: 3, total: 3 });
+      return { fighterId: cloud.id, spritesImported: 3, optionalAssetsSkipped: 0, spritesSkipped: 0 };
+    });
+    vi.spyOn(SpriteCache, 'getAllSpritesForHash').mockResolvedValue([]);
+    vi.spyOn(SpriteCache, 'getCachedMeta').mockImplementation(async (photoHash) => ({
+      ...meta(photoHash, entries.find((entry) => entry.photoHash === photoHash)?.cloudFighterId ?? null),
+      cloudPublic: true,
+    }));
+    const controller = new AbortController();
+    const progress = vi.fn();
+    const preparing = prepareRosterFighters([...entries, entries[0]], 'aura', { signal: controller.signal, onProgress: progress });
+    // Neither download has completed, but both have already begun.
+    expect(download).toHaveBeenCalledTimes(2);
+    expect(download.mock.calls.every(([, , options]) => options?.gameMode === 'aura' && options.includeSourceAssets === false)).toBe(true);
+    release.forEach((resolve) => resolve());
+    await expect(preparing).resolves.toBe(0);
+    expect(progress).toHaveBeenCalledWith(entries[1], { phase: 'ready', completed: 0, total: 0 });
+  });
+
+  it('cancels both imports and never validates a late completed match', async () => {
+    const entries = buildRosterFighterSections([], [globals[0], globals[2]]).official;
+    const signals: AbortSignal[] = [];
+    const release: Array<() => void> = [];
+    vi.spyOn(CloudFighters, 'downloadArcadeFighterToLocal').mockImplementation(async (cloud, _context, options) => {
+      signals.push(options!.signal!);
+      await new Promise<void>((resolve) => release.push(resolve));
+      return { fighterId: cloud.id, spritesImported: 3, optionalAssetsSkipped: 0, spritesSkipped: 0 };
+    });
+    const sprites = vi.spyOn(SpriteCache, 'getAllSpritesForHash').mockResolvedValue([]);
+    const controller = new AbortController();
+    const preparing = prepareRosterFighters(entries, 'aura', { signal: controller.signal, onProgress: vi.fn() });
+    const rejected = expect(preparing).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    expect(signals).toHaveLength(2);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    release.forEach((resolve) => resolve());
+    await Promise.resolve();
+    expect(sprites).not.toHaveBeenCalled();
   });
 });

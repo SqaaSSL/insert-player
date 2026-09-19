@@ -23,6 +23,8 @@ interface AuraBattleResultsProps {
   onChallengeCreated?: (challenge: AuraChallenge) => void;
   onCreatePlayer?: () => void;
   onBuildCrew?: () => void;
+  debutSaveState?: 'idle' | 'saving' | 'saved' | 'error';
+  onRetryDebut?: () => void;
   onRetry: () => void;
   onRemix?: () => void;
   onExit: () => void;
@@ -46,6 +48,8 @@ export function AuraBattleResults({
   onChallengeCreated,
   onCreatePlayer,
   onBuildCrew,
+  debutSaveState = 'idle',
+  onRetryDebut,
   onRetry,
   onRemix,
   onExit,
@@ -103,6 +107,35 @@ export function AuraBattleResults({
     }
   };
 
+  const nextMission = <>
+    {trial && onCreatePlayer ? (
+      <div className="aura-results__rookie">
+        <div>
+          <h3>Next Mission</h3>
+          <p>Create yourself from one photo. Your first Rookie is included.</p>
+        </div>
+        <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>
+          Create My Free Rookie
+        </button>
+      </div>
+    ) : null}
+    {onBuildCrew ? (
+      <div className="aura-results__rookie">
+        <div>
+          <h3>Debut Complete</h3>
+          <p>Your Rookie is ready. Build a Crew so your friends can play it too.</p>
+          {debutSaveState === 'saving' ? <p role="status">Saving your debut...</p> : null}
+          {debutSaveState === 'error' ? <>
+            <p className="aura-results__status is-error" role="status">Your debut has not synced yet. Retry now or continue to your Crew to try again.</p>
+            {onRetryDebut ? <button type="button" className="asf-btn" onClick={onRetryDebut}>Retry saving debut</button> : null}
+          </> : null}
+        </div>
+        <button type="button" className="asf-btn asf-btn--primary" onClick={onBuildCrew}>
+          Build My Crew
+        </button>
+      </div>
+    ) : null}
+  </>;
 
   return (
     <section className="aura-results" role="dialog" aria-label="Aura Battle result">
@@ -123,6 +156,7 @@ export function AuraBattleResults({
         }
       }}>
         <h2 className="sr-only">{resultHeadline(summary)}</h2>
+        {!challenge ? nextMission : null}
         {finisher}
 
         {challenge && comparison ? <p className="aura-results__challenge-result" role="status">
@@ -137,33 +171,12 @@ export function AuraBattleResults({
         {battle || challengeComposer ? <div className="aura-results__share-main">
           {battle ? <BattleResultShare battle={battle} onBattleChange={onBattleChange} /> : challengeComposer}
         </div> : null}
+        {challenge ? nextMission : null}
 
         {onlineRematch.message ? (
           <p className={`aura-results__status${onlineRematch.state === 'error' ? ' is-error' : ''}`} role="status">
             {onlineRematch.message}
           </p>
-        ) : null}
-        {trial && onCreatePlayer ? (
-          <div className="aura-results__rookie">
-            <div>
-              <h3>Next Mission</h3>
-              <p>Create yourself from one photo. Your first Rookie is included.</p>
-            </div>
-            <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>
-              Create My Free Rookie
-            </button>
-          </div>
-        ) : null}
-        {onBuildCrew ? (
-          <div className="aura-results__rookie">
-            <div>
-              <h3>Debut Complete</h3>
-              <p>Your Rookie is ready. Build a Crew so your friends can play it too.</p>
-            </div>
-            <button type="button" className="asf-btn asf-btn--primary" onClick={onBuildCrew}>
-              Build My Crew
-            </button>
-          </div>
         ) : null}
         <div className="aura-results__actions">
           <button

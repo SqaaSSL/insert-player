@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiSessionChangedError,
+  ApiRequestTimeoutError,
   apiFetch,
   apiUrl,
   captureApiRequestContext,
   configureApiAuth,
   createDetachedApiRequestContext,
   withProviderSession,
+  withApiRequestTimeout,
 } from './ApiClient';
 
 describe('ApiClient request contexts', () => {
@@ -19,6 +21,7 @@ describe('ApiClient request contexts', () => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.unstubAllEnvs();
+    vi.useRealTimers();
   });
 
   it('routes canonical public assets through a relative local API proxy', () => {
@@ -114,5 +117,57 @@ describe('ApiClient request contexts', () => {
 
     await expect(request).rejects.toBeInstanceOf(ApiSessionChangedError);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('aborts and settles a stalled response body at its deadline', async () => {
+    vi.useFakeTimers();
+    let bodySignal!: AbortSignal;
+    const response = new Response('headers arrived');
+    vi.spyOn(response, 'blob').mockImplementation(() => new Promise(() => {}));
+    vi.stubGlobal('fetch', vi.fn(async (_input: string, init: RequestInit) => {
+      bodySignal = init.signal as AbortSignal;
+      return response;
+    }));
+
+    const request = withApiRequestTimeout(async (signal) => {
+      const result = await apiFetch('/asset.png', { signal });
+      return result.blob();
+    }, { timeoutMs: 100 });
+    const rejected = expect(request).rejects.toBeInstanceOf(ApiRequestTimeoutError);
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    expect(bodySignal.aborted).toBe(true);
+  });
+
+  it('cancels token retrieval without starting a late network request', async () => {
+    let releaseToken!: (token: string) => void;
+    configureApiAuth(() => new Promise((resolve) => { releaseToken = resolve; }));
+    const controller = new AbortController();
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const request = withApiRequestTimeout(
+      (signal) => apiFetch('/asset.png', { signal }),
+      { signal: controller.signal },
+    );
+    const rejected = expect(request).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    await rejected;
+    releaseToken('late-token');
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('clears the deadline and listener after a successful download', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const blob = new Blob(['sprite']);
+    let requestSignal!: AbortSignal;
+    await expect(withApiRequestTimeout(async (signal) => {
+      requestSignal = signal;
+      return blob;
+    }, { signal: controller.signal, timeoutMs: 100 })).resolves.toBe(blob);
+    expect(vi.getTimerCount()).toBe(0);
+    controller.abort();
+    expect(requestSignal.aborted).toBe(false);
   });
 });

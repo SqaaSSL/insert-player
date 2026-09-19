@@ -25,6 +25,22 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
     anonymous: { limit: 6, windowSeconds: 60 * 60 },
     signedIn: { limit: 20, windowSeconds: 60 * 60 },
   },
+  'product:event': {
+    anonymous: { limit: 120, windowSeconds: 60 * 60 },
+    signedIn: { limit: 120, windowSeconds: 60 * 60 },
+  },
+  'admin:product-events': {
+    anonymous: { limit: 0, windowSeconds: 60 * 60 },
+    signedIn: { limit: 60, windowSeconds: 60 * 60 },
+  },
+  'onboarding:trial': {
+    anonymous: { limit: 0, windowSeconds: 60 * 60 },
+    signedIn: { limit: 30, windowSeconds: 60 * 60 },
+  },
+  'crew:status': {
+    anonymous: { limit: 0, windowSeconds: 60 * 60 },
+    signedIn: { limit: 120, windowSeconds: 60 * 60 },
+  },
   'proxy:default': {
     anonymous: { limit: 80, windowSeconds: 60 * 60 },
     signedIn: { limit: 600, windowSeconds: 60 * 60 },
@@ -108,6 +124,9 @@ const ROUTE_LIMITS: Record<string, { anonymous: LimitRule; signedIn: LimitRule }
 };
 
 function getLimit(routeKey: string, auth: PublicAuthContext): LimitRule {
+  if (routeKey === 'product:event' || routeKey === 'admin:product-events' || routeKey === 'crew:status') {
+    return auth.userId ? ROUTE_LIMITS[routeKey].signedIn : ROUTE_LIMITS[routeKey].anonymous;
+  }
   // Public video storage has the same bounded allowance on every paid tier.
   if (routeKey === 'aura:clip' || routeKey === 'battle:create' || routeKey === 'battle:finisher' || routeKey === 'battle:recording') {
     return auth.userId ? ROUTE_LIMITS[routeKey].signedIn : ROUTE_LIMITS[routeKey].anonymous;

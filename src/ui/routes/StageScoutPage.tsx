@@ -16,8 +16,10 @@ import {
 import type { CachedStageBackground } from '../../services/SpriteCache.ts';
 import {
   findPendingCrewStageUpload,
+  loadCrewStage,
   resumePendingCrewStageUpload,
   type CrewStageIdentity,
+  type CrewStageStatus,
 } from '../../services/CrewStages.ts';
 import { STAGE_FORGE_CREDIT_COST } from '../../shared/StageForgePricing.ts';
 import { Button } from '../components/Button.tsx';
@@ -48,6 +50,35 @@ interface StageCreationSuccess {
   creditsCharged: number;
   creditsBalance?: number;
   billingMode: PhotoStageCreationResult['billingMode'] | 'free';
+}
+
+export function CrewStageAvailability({ status, error, checking, working, onRetry, onBack }: {
+  status: CrewStageStatus | null;
+  error: string | null;
+  checking: boolean;
+  working: boolean;
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  if (!checking && !error && status?.canCreate) return null;
+  const message = checking ? 'Checking your Crew’s included stage...'
+    : error ? error
+    : status?.claimState === 'ready' ? 'Your Crew has already chosen its one included stage. Head back to play together.'
+    : status?.claimState === 'reserved' && status.canResumeCreate ? 'Your included forge is reserved but has not started. Capture a view and retry the same forge below.'
+    : status?.claimState === 'reserved' ? 'Your Crew stage is already being prepared. Finish any saved upload below, or check again in a moment.'
+    : status?.eligibilityReason === 'crew_stage_friend_required'
+      ? 'Invite a friend first. Your included stage unlocks once they join with a verified Google, Apple, or Microsoft account.'
+    : status?.eligibilityReason === 'crew_stage_verification_unavailable'
+      ? 'We could not check your Crew right now. Retry in a moment.'
+    : status ? 'Ask a Crew admin to choose the included stage.'
+    : 'Your Crew stage could not be checked. Try again.';
+  return <section aria-label="Crew stage availability">
+    <StatusMessage severity={checking ? 'progress' : error || status?.eligibilityReason === 'crew_stage_verification_unavailable' ? 'error' : 'info'}>{message}</StatusMessage>
+    <div className="stage-scout__forge-actions">
+      {!checking && status?.claimState !== 'ready' ? <Button disabled={working} onClick={onRetry}>Retry Crew Check</Button> : null}
+      {!checking ? <Button disabled={working} onClick={onBack}>Back to Crew</Button> : null}
+    </div>
+  </section>;
 }
 
 export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPageProps) {
@@ -85,9 +116,32 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
   const [pendingCrewStage, setPendingCrewStage] = useState<CachedStageBackground | null>(null);
   const [crewStageRecoveryAttempt, setCrewStageRecoveryAttempt] = useState(0);
   const [crewStageRecoveryError, setCrewStageRecoveryError] = useState<string | null>(null);
+  const [crewStageStatus, setCrewStageStatus] = useState<CrewStageStatus | null>(null);
+  const [crewStageCheckAttempt, setCrewStageCheckAttempt] = useState(0);
+  const [crewStageChecking, setCrewStageChecking] = useState(Boolean(crew));
+  const [crewStageCheckError, setCrewStageCheckError] = useState<string | null>(null);
   const [creationSuccess, setCreationSuccess] = useState<StageCreationSuccess | null>(null);
   const capturedUrl = useObjectUrl(capturedBlob);
   const createdStageUrl = useObjectUrl(creationSuccess?.stage.pngBlob ?? null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setCrewStageStatus(null);
+    setCrewStageCheckError(null);
+    setCrewStageChecking(Boolean(crew));
+    if (!crew) return () => { cancelled = true; };
+    void loadCrewStage().then(value => {
+      if (!cancelled) setCrewStageStatus(value);
+    }).catch((error: unknown) => {
+      if (!cancelled) setCrewStageCheckError(error instanceof Error ? error.message : 'Your Crew stage could not be checked. Try again.');
+    }).finally(() => {
+      if (!cancelled) setCrewStageChecking(false);
+    });
+    return () => { cancelled = true; };
+  }, [crew?.id, crewStageCheckAttempt]);
+
+  const canCreateCrewStage = !crew || (!crewStageChecking && !crewStageCheckError
+    && (crewStageStatus?.canCreate === true || crewStageStatus?.canResumeCreate === true));
 
   useEffect(() => {
     let cancelled = false;
@@ -376,6 +430,7 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
 
   const captureCurrentView = async () => {
     const frame = readCurrentFrame();
+    if (!canCreateCrewStage) return;
     if (!frame || busyAction) {
       setStatus('Choose a Street View panorama before capturing.');
       return;
@@ -395,7 +450,8 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
   };
 
   const createStage = async (mode: 'forge' | 'direct') => {
-    if (!capturedBlob || !capturedFrame || busyAction) return;
+    if (!capturedBlob || !capturedFrame || busyAction || !canCreateCrewStage) return;
+    if (mode === 'direct' && crew && !crewStageStatus?.canCreate) return;
     const action: BusyAction = mode === 'forge' ? 'forge' : 'direct';
     setBusyAction(action);
     if (mode === 'forge') setForgeError(null);
@@ -430,6 +486,7 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
       const message = error instanceof Error ? error.message : 'The stage could not be created.';
       setStatus(message);
       setForgeError(message);
+      if (crew) setCrewStageCheckAttempt(attempt => attempt + 1);
     } finally {
       setBusyAction(null);
     }
@@ -473,6 +530,15 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
         </div>
         <Button onClick={onBack} disabled={working}>Back</Button>
       </header>
+
+      {crew ? <CrewStageAvailability
+        status={crewStageStatus}
+        error={crewStageCheckError}
+        checking={crewStageChecking}
+        working={working}
+        onRetry={() => setCrewStageCheckAttempt(attempt => attempt + 1)}
+        onBack={onBack}
+      /> : null}
 
       <form className="stage-scout__search" onSubmit={searchForPlace}>
         <label htmlFor="stage-scout-place">Find a real place</label>
@@ -571,7 +637,7 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
           <Button
             variant="primary"
             size="lg"
-            disabled={!liveFrame || working}
+            disabled={!liveFrame || working || !canCreateCrewStage}
             onClick={() => void captureCurrentView()}
           >
             {busyAction === 'capture' ? 'Capturing...' : capturedBlob ? 'Recapture View' : 'Capture This View'}
@@ -604,7 +670,7 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
               <Button
                 variant="primary"
                 size="lg"
-                disabled={working || !stageName.trim()}
+                disabled={working || !stageName.trim() || !canCreateCrewStage}
                 onClick={() => {
                   setForgeError(null);
                   setConfirmationMode('forge');
@@ -613,12 +679,12 @@ export function StageScoutPage({ onBack, onComplete, crew = null }: StageScoutPa
                 {busyAction === 'forge'
                   ? 'Forging...'
                   : crew
-                    ? 'Forge Crew Stage · Included'
+                    ? crewStageStatus?.canResumeCreate ? 'Retry Included Forge' : 'Forge Crew Stage · Included'
                     : `Forge Stage · ${STAGE_FORGE_CREDIT_COST} Credit`}
               </Button>
               <Button
                 size="lg"
-                disabled={working || !stageName.trim()}
+                disabled={working || !stageName.trim() || !canCreateCrewStage || Boolean(crew && !crewStageStatus?.canCreate)}
                 onClick={() => crew ? setConfirmationMode('direct') : void createStage('direct')}
               >
                 {busyAction === 'direct'

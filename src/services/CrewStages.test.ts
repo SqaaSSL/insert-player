@@ -6,12 +6,14 @@ const {
   getAllCachedStageBackgrounds,
   getCachedStageBackground,
   setCachedStageBackground,
+  trackProductEvent,
 } = vi.hoisted(() => ({
   apiFetch: vi.fn(),
   deleteCachedStageBackground: vi.fn(),
   getAllCachedStageBackgrounds: vi.fn(),
   getCachedStageBackground: vi.fn(),
   setCachedStageBackground: vi.fn(),
+  trackProductEvent: vi.fn(),
 }));
 
 vi.mock('./ApiClient.ts', () => ({
@@ -25,12 +27,14 @@ vi.mock('./SpriteCache.ts', () => ({
   getCachedStageBackground,
   setCachedStageBackground,
 }));
+vi.mock('./ProductEvents.ts', () => ({ trackProductEvent }));
 
 import {
   cachePendingCrewStageUpload,
   crewStageCacheKey,
   findPendingCrewStageUpload,
   isStageVisibleToActiveCrew,
+  loadCrewStage,
   resumePendingCrewStageUpload,
   saveCrewStage,
   syncCrewStageToLocal,
@@ -55,6 +59,7 @@ beforeEach(() => {
   getAllCachedStageBackgrounds.mockReset();
   getCachedStageBackground.mockReset();
   setCachedStageBackground.mockReset();
+  trackProductEvent.mockReset();
 });
 
 afterEach(() => vi.unstubAllEnvs());
@@ -85,6 +90,33 @@ describe('Crew stage cloud cache', () => {
       cloudContentHash: remote.contentHash,
     });
     expect(setCachedStageBackground).toHaveBeenCalledOnce();
+    expect(trackProductEvent).toHaveBeenCalledWith('stage_completed', { source: 'crew' });
+  });
+
+  it.each(['crew_stage_friend_required', 'crew_stage_verification_unavailable'] as const)('retains %s instead of treating it as an admin failure', async (eligibilityReason) => {
+    apiFetch.mockResolvedValue(Response.json({ claimState: 'available', canCreate: false, eligibilityReason, stage: null }));
+    expect(await loadCrewStage()).toMatchObject({ canCreate: false, eligibilityReason });
+  });
+
+  it('fails closed for unknown or contradictory creation availability', async () => {
+    apiFetch.mockResolvedValueOnce(Response.json({ claimState: 'available', canCreate: true, eligibilityReason: 'private-message', stage: null }));
+    await expect(loadCrewStage()).rejects.toThrow('invalid eligibility reason');
+    apiFetch.mockResolvedValueOnce(Response.json({ claimState: 'ready', canCreate: true, stage: remote }));
+    expect(await loadCrewStage()).toMatchObject({ canCreate: false, eligibilityReason: null });
+    apiFetch.mockResolvedValueOnce(Response.json({ claimState: 'reserved', canCreate: false, canResumeCreate: true, stage: null }));
+    expect(await loadCrewStage()).toMatchObject({ canCreate: false, canResumeCreate: true });
+    apiFetch.mockResolvedValueOnce(Response.json({ claimState: 'available', canCreate: false, canResumeCreate: true, stage: null }));
+    expect(await loadCrewStage()).toMatchObject({ canCreate: false, canResumeCreate: false });
+  });
+
+  it('does not count a failed or malformed upload as a completed stage', async () => {
+    const local: CachedStageBackground = { stageKey: 'pending', prompt: '', pngBlob: new Blob(['png']), createdAt: 1, kind: 'photo' };
+    apiFetch.mockResolvedValueOnce(Response.json({ error: 'Friend required' }, { status: 409 }));
+    await expect(saveCrewStage(local, crew)).rejects.toThrow('Friend required');
+    apiFetch.mockResolvedValueOnce(Response.json({ stage: null }));
+    await expect(saveCrewStage(local, crew)).rejects.toThrow('invalid stage');
+    expect(trackProductEvent).not.toHaveBeenCalled();
+    expect(setCachedStageBackground).not.toHaveBeenCalled();
   });
 
   it('downloads a ready Crew stage once and hides cached stages from another active Crew', async () => {

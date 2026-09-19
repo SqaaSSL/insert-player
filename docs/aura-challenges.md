@@ -27,8 +27,9 @@ The checksum is a compatibility marker, not a security signature.
 Scores are unverified social claims. They never become ranked proof or authorize
 account mutations. Device history stores up to twenty compatible public links
 with local best scores; it is not synchronized and does not identify unique
-players. Device-only ProductEvents record open/start/complete/create and actual
-video handoffs without names, IDs or link tokens.
+players. ProductEvents record open/start/complete/create and actual video
+handoffs without names, IDs or link tokens. Detailed logs stay on the device;
+first-party anonymous daily totals follow `product-measurement.md`.
 
 Generic bundled demo art is covered by the isolated exception in
 `aura-animation-packs-v1.md`. It is not a public roster identity or a paid-quality

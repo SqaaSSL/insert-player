@@ -50,6 +50,7 @@ import { AuraStartReady } from '../components/AuraStartReady.tsx';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
+import { rememberCompletedAuraTrial } from '../../services/Crews.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
 import {
@@ -149,6 +150,10 @@ export function GamePage({
   const combatStartRef = useRef<MatchStartDetail | null>(null);
   const [rushSummary, setRushSummary] = useState<RushRunCompleteDetail | null>(null);
   const [auraSummary, setAuraSummary] = useState<AuraBattleCompleteDetail | null>(null);
+  const [debutSaveState, setDebutSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const debutSaveEpochRef = useRef(0);
+  const debutSessionRef = useRef(authSessionKey);
+  debutSessionRef.current = authSessionKey;
   const [auraOnboarding, setAuraOnboarding] = useState<AuraOnboardingDetail | null>(null);
   const [auraPracticeRecommended, setAuraPracticeRecommended] = useState(false);
   const guidedThisMount = useRef(false);
@@ -174,6 +179,32 @@ export function GamePage({
     launchTarget.data.rushCompanionOrder ?? 'follow',
   );
   const trialPrimaryActionRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    debutSaveEpochRef.current += 1;
+    setDebutSaveState('idle');
+    return () => { debutSaveEpochRef.current += 1; };
+  }, [authSessionKey, launchTarget]);
+
+  const saveAuraDebut = async () => {
+    const fighterId = launchTarget.data.p1CloudFighterId;
+    if (!onboardingDebut) return;
+    if (!fighterId || !onAuraDebutComplete) {
+      setDebutSaveState('error');
+      return;
+    }
+    const epoch = ++debutSaveEpochRef.current;
+    setDebutSaveState('saving');
+    try {
+      await onAuraDebutComplete(fighterId);
+      if (debutSaveEpochRef.current === epoch && debutSessionRef.current === authSessionKey) {
+        setDebutSaveState('saved');
+      }
+    } catch (error) {
+      if (debutSaveEpochRef.current !== epoch || debutSessionRef.current !== authSessionKey) return;
+      setDebutSaveState('error');
+      debugWarn('[Onboarding] Aura debut will retry:', error instanceof Error ? error.message : error);
+    }
+  };
   useEffect(() => {
     const receive = (event: WindowEventMap[typeof BATTLE_CAPTURE_EVENT]) => {
       const detail = event.detail;
@@ -359,19 +390,15 @@ export function GamePage({
   useEffect(() => {
     if (!isAura) return;
     const onAuraComplete = (event: WindowEventMap[typeof AURA_BATTLE_COMPLETE_EVENT]) => {
+      if (trial) rememberCompletedAuraTrial();
       onComplete();
       setAuraSummary(event.detail);
       setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
-      const fighterId = launchTarget.data.p1CloudFighterId;
-      if (onboardingDebut && fighterId && onAuraDebutComplete) {
-        void onAuraDebutComplete(fighterId).catch((error: unknown) => {
-          debugWarn('[Onboarding] Aura debut could not be recorded:', error instanceof Error ? error.message : error);
-        });
-      }
+      if (onboardingDebut) void saveAuraDebut();
     };
     window.addEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
     return () => window.removeEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
-  }, [isAura, launchTarget.data.p1CloudFighterId, onAuraDebutComplete, onComplete, onboardingDebut]);
+  }, [isAura, launchTarget, onAuraDebutComplete, onComplete, onboardingDebut, trial, authSessionKey]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !isRush) return;
@@ -950,6 +977,8 @@ export function GamePage({
           trial={trial}
           onCreatePlayer={onCreateFighter}
           onBuildCrew={onboardingDebut ? onContinueOnboarding : undefined}
+          debutSaveState={debutSaveState}
+          onRetryDebut={() => void saveAuraDebut()}
           capture={auraCapture}
           localSlot={online?.localSlot}
           onlineRematch={online ? onlineRematch : undefined}

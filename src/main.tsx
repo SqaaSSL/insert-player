@@ -104,7 +104,7 @@ function ClerkSessionBridge() {
   useEffect(() => {
     configureApiAuth(isLoaded && isSignedIn ? () => getToken() : null);
     return () => configureApiAuth(null);
-  }, [getToken, isLoaded, isSignedIn]);
+  }, [getToken, isLoaded, isSignedIn, user?.id, organization?.id]);
 
   useEffect(() => {
     let cancelled = false;

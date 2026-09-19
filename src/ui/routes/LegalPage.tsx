@@ -215,6 +215,7 @@ function PrivacyPolicy() {
           <li>Community reports, bounded report details, report counts, moderation decisions, and moderator notes.</li>
           <li>Crew identifiers, fighter-sharing grants, invitation channel and status, referral reward status, and one-way keyed hashes used to detect repeat social-account rewards. For WhatsApp invites, we create the link and message you choose to share; Insert Player does not receive your contacts or their phone numbers. Legacy email invitations are handled by Clerk without duplicating the raw address in our referral table.</li>
           <li>Security and diagnostic data, including pseudonymized network identifiers, request timing, errors, and abuse counters.</li>
+          <li>Anonymous daily totals of visits, gameplay, creation, and Crew steps, grouped by a fixed channel name such as Instagram or WhatsApp. These totals contain no account or visitor identifiers, photos, contact details, full URLs, referrers, or individual event history. Reported completion durations are combined into totals and averages.</li>
         </ul>
         <p>Insert Player does not use your photo to verify your identity, identify you in other images, or create a biometric identity database.</p>
       </section>
@@ -225,6 +226,7 @@ function PrivacyPolicy() {
           <li>To create, store, sync, upgrade, and play the fighter you request, share its clean playable derivatives with your selected Crew, and publish those derivatives to Community only when you choose.</li>
           <li>To authenticate your account, fulfil purchases, settle generation credits, investigate failures, and provide support or mandatory remedies.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
+          <li>To check whether the onboarding works using anonymous operational totals. We also count completed actions already recorded to deliver the service, such as accepted Crew invitations and credited purchases; these counts are not linked to anonymous visits.</li>
           <li>To create requested Crew invite links, add a friend who claims one to the Crew, confirm referral eligibility, prevent repeat rewards, and issue or reconcile earned Rookie passes.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
           <li>To meet tax, accounting, consumer-protection, and other legal duties.</li>
@@ -253,6 +255,7 @@ function PrivacyPolicy() {
           <li>Signed-in source photos, generated views, and every generated version remain in your roster until you delete the fighter or account.</li>
           <li>Crew and referral records remain while needed to operate membership, administer rewards, and prevent repeat abuse. Account deletion removes active account links; a minimal pseudonymous anti-abuse record may remain where necessary to protect the referral system.</li>
           <li>Expired provider sessions are removed after seven days. Stripe and Clerk webhook audit markers are removed after 180 days.</li>
+          <li>Anonymous product-measurement totals are retained for 90 days and then removed by scheduled cleanup. The underlying account, Crew, and payment records follow their own retention rules above.</li>
           <li>Minimal records proving generation and checkout consent are retained for up to six years, then deleted.</li>
           <li>Open community reports remain while review is needed. Dismissed and actioned reports are deleted after one year.</li>
           <li>Payment and tax records may remain with Stripe or in legally required accounting records for the applicable statutory period.</li>
@@ -272,7 +275,7 @@ function PrivacyPolicy() {
       <section>
         <h2>7. Cookies and local storage</h2>
         <p>After you publish an Aura video, this browser stores a removal token for that battle link until it expires. This token lets you remove the link without an account; it is not included in the shared URL. Clearing browser storage removes this browser’s copy of the token.</p>
-        <p>Insert Player uses only storage needed for authentication, Crew selection, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or send optional analytics to an external service. A bounded playtest log stays on this device and can be exported from Credits; it records game and creation events without names, photos or challenge links. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
+        <p>Insert Player uses storage for authentication, Crew selection, security, checkout return state, local roster data, and gameplay. We do not run advertising trackers or third-party analytics SDKs. A bounded detailed playtest log stays on this device and can be exported from Credits; it records events without names, photos or challenge links. Anonymous operational measurement sends only fixed event and channel names and bounded numeric values to our own backend, which immediately combines them into daily totals. It uses no analytics cookie, persistent visitor identifier, or cross-site tracking. Channel names come only from a recognised utm_source value, held in memory while this page is open; other campaign text and full URLs are not sent. Browser Do Not Track and Global Privacy Control signals disable this delivery. A creation draft can be restored on this device for 24 hours after checkout navigation; expired drafts are discarded when accessed again. Cloudflare Turnstile may use necessary security storage to distinguish people from automated abuse.</p>
       </section>
 
       <section>

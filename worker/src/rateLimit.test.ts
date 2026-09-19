@@ -3,6 +3,19 @@ import { enforceRateLimit } from './rateLimit';
 import type { Env, PublicAuthContext } from './types';
 
 describe('D1 rate limits', () => {
+  it.each([
+    ['product:event', 120], ['admin:product-events', 60], ['crew:status', 120],
+  ] as const)('keeps the %s telemetry budget bounded even for admins', async (routeKey, limit) => {
+    let count = limit;
+    const env = { DB: {
+      prepare: () => ({ bind: () => ({}) }),
+      batch: async () => [{ results: [{ count: count++ }] }, { results: [] }],
+    } } as unknown as Env;
+    const auth = { userId: 'admin', user: { plan_tier: 'admin' }, rateLimitKey: 'user:admin', claims: {} } as PublicAuthContext;
+    expect(await enforceRateLimit(env, routeKey, auth)).toBeNull();
+    expect((await enforceRateLimit(env, routeKey, auth))?.status).toBe(429);
+  });
+
   it('allows the configured count and rejects the next atomic increment', async () => {
     let count = 0;
     const statements: Array<{ sql: string; args: unknown[] }> = [];

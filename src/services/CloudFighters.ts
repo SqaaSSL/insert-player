@@ -1,7 +1,10 @@
 import {
   ApiSessionChangedError,
+  ApiRequestTimeoutError,
   apiFetch,
+  assertApiRequestContextCurrent,
   captureApiRequestContext,
+  withApiRequestTimeout,
   type ApiRequestContext,
 } from './ApiClient';
 import {
@@ -31,9 +34,11 @@ import {
 import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
 import {
   isTemplateOnlyFighterIdentity,
+  PLAYABLE_ANIMATION_NAMES,
 } from './PlayableFighterAssets.ts';
 import {
   assetPackAnimationNames,
+  AURA_LOADABLE_ANIMATION_NAMES,
   inferFighterAssetPacks,
   resolveFighterModeReadiness,
   type AssetPackSprite,
@@ -137,6 +142,16 @@ export interface CloudImportOptions {
   allowIncomplete?: boolean;
   cloudManagement?: 'arcade' | 'crew';
   crew?: { id: string; name: string } | null;
+  gameMode?: FighterGameMode;
+  signal?: AbortSignal;
+  assetTimeoutMs?: number;
+  onProgress?: (progress: CloudImportProgress) => void;
+}
+
+export interface CloudImportProgress {
+  phase: 'checking' | 'downloading' | 'ready';
+  completed: number;
+  total: number;
 }
 
 export interface CloudRosterSyncSummary {
@@ -551,7 +566,14 @@ export function cloudSpritesForImport(
   }
   // Archived/private versions are not playable pointers. Falling back to them here can
   // expose an unapproved review candidate or make a partial roster look complete.
-  return selectPlayableCloudSprites(fighter.sprites);
+  const sprites = selectPlayableCloudSprites(fighter.sprites);
+  if (!options.gameMode) return sprites;
+  // Aura uses its own performance sheets plus idle for template registration
+  // and the authored victory/KO finale. Other combat moves never render there.
+  const needed = new Set<string>(options.gameMode === 'aura'
+    ? [...AURA_LOADABLE_ANIMATION_NAMES, 'idle', 'victory', 'ko']
+    : PLAYABLE_ANIMATION_NAMES);
+  return sprites.filter((sprite) => needed.has(sprite.animationName));
 }
 
 function isLocalDevWithoutApi(): boolean {
@@ -717,13 +739,19 @@ async function promoteSprite(
   }
 }
 
-export async function listCloudFighters(context?: ApiRequestContext): Promise<CloudFighter[]> {
+export async function listCloudFighters(
+  context?: ApiRequestContext,
+  options: { signal?: AbortSignal } = {},
+): Promise<CloudFighter[]> {
   if (isLocalDevWithoutApi()) return [];
-  const res = await apiFetch('/api/fighters', {}, context);
+  const requestContext = context ?? captureApiRequestContext();
+  const res = await apiFetch('/api/fighters', options.signal ? { signal: options.signal } : {}, requestContext);
   if (res.status === 401) return [];
   if (res.status === 503) throw await cloudFighterRequestError(res, 'Cloud fighters');
   if (!res.ok) throw new Error(`Cloud fighters failed (${res.status})`);
   const json = await res.json() as { fighters?: CloudFighter[] };
+  options.signal?.throwIfAborted();
+  assertApiRequestContextCurrent(requestContext);
   return json.fighters ?? [];
 }
 
@@ -864,18 +892,23 @@ export async function setCloudFighterAccess(
   fighterId: string,
   scope: 'crew' | 'community',
   context?: ApiRequestContext,
+  options: { signal?: AbortSignal } = {},
 ): Promise<CloudFighter | null> {
+  const requestContext = context ?? captureApiRequestContext();
   const res = await apiFetch(`/api/fighters/${encodeURIComponent(fighterId)}/access`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ scope }),
-  }, context);
+    ...(options.signal ? { signal: options.signal } : {}),
+  }, requestContext);
   if (res.status === 401) return null;
   if (res.status === 503) throw await cloudFighterRequestError(res, 'Share update');
   if (!res.ok) {
     throw new Error(`Share update failed (${res.status}): ${await apiErrorMessage(res, 'Share update failed')}`);
   }
   const json = await res.json() as { fighter?: CloudFighter };
+  options.signal?.throwIfAborted();
+  assertApiRequestContextCurrent(requestContext);
   return json.fighter ?? null;
 }
 
@@ -1127,21 +1160,29 @@ async function fetchRequiredBlob(
   url: string | null | undefined,
   label: string,
   context: ApiRequestContext,
+  options: Pick<CloudImportOptions, 'signal' | 'assetTimeoutMs'> = {},
 ): Promise<Blob | null> {
   if (!url) return null;
-  const res = await apiFetch(url, {}, context);
-  if (!res.ok) throw new Error(`${label} fetch failed (${res.status})`);
-  return res.blob();
+  return withApiRequestTimeout(async (signal) => {
+    const res = await apiFetch(url, { signal }, context);
+    if (!res.ok) throw new Error(`${label} fetch failed (${res.status})`);
+    const blob = await res.blob();
+    signal.throwIfAborted();
+    assertApiRequestContextCurrent(context);
+    return blob;
+  }, { signal: options.signal, timeoutMs: options.assetTimeoutMs });
 }
 
 async function fetchOptionalBlob(
   url: string | null | undefined,
   label: string,
   context: ApiRequestContext,
+  options: Pick<CloudImportOptions, 'signal' | 'assetTimeoutMs'> = {},
 ): Promise<Blob | null> {
   try {
-    return await fetchRequiredBlob(url, label, context);
+    return await fetchRequiredBlob(url, label, context, options);
   } catch (err: any) {
+    options.signal?.throwIfAborted();
     if (err instanceof ApiSessionChangedError) throw err;
     debugWarn(`[Cloud] Optional asset skipped for ${label}:`, err?.message ?? err);
     return null;
@@ -1155,6 +1196,13 @@ export async function downloadCloudFighterToLocal(
 ): Promise<CloudImportResult> {
   const requestContext = context ?? captureApiRequestContext();
   const ownerScope = getActiveSpriteCacheScope();
+  const assertCurrent = () => {
+    options.signal?.throwIfAborted();
+    assertApiRequestContextCurrent(requestContext);
+    if (ownerScope !== getActiveSpriteCacheScope()) throw new ApiSessionChangedError();
+  };
+  assertCurrent();
+  options.onProgress?.({ phase: 'checking', completed: 0, total: 0 });
   const includeRawAssets = options.includeRawAssets !== false;
   const includeSourceAssets = options.includeSourceAssets !== false;
   if (!fighter.photoHash) {
@@ -1165,6 +1213,7 @@ export async function downloadCloudFighterToLocal(
     getCachedMeta(photoHash, ownerScope),
     getAllSpriteVersionsForHash(photoHash, ownerScope),
   ]);
+  assertCurrent();
   const staleSourceKinds = new Set<string>();
   const loadSource = async (
     kind: string,
@@ -1176,7 +1225,7 @@ export async function downloadCloudFighterToLocal(
     const localHash = existingMeta?.cloudSourceHashes?.[kind] ?? null;
     if (existingBlob && remoteHash && localHash === remoteHash) return existingBlob;
     if (!url) return existingBlob ?? null;
-    const fetched = await fetchOptionalBlob(url, label, requestContext);
+    const fetched = await fetchOptionalBlob(url, label, requestContext, options);
     if (fetched) return fetched;
     if (existingBlob) {
       staleSourceKinds.add(kind);
@@ -1259,21 +1308,25 @@ export async function downloadCloudFighterToLocal(
   const spriteVersions = cloudSpritesForImport(fighter, options);
   const localFingerprints = await fingerprintSprites(localSpriteVersions);
   const spritePlan = buildSpriteDownloadPlan(spriteVersions, localFingerprints, options);
+  let spritesCompleted = 0;
+  assertCurrent();
+  options.onProgress?.({ phase: 'downloading', completed: 0, total: spritePlan.length });
 
   for (let index = 0; index < spritePlan.length; index += CLOUD_SPRITE_IMPORT_CONCURRENCY) {
+    assertCurrent();
     const batch = spritePlan.slice(index, index + CLOUD_SPRITE_IMPORT_CONCURRENCY);
     await Promise.all(batch.map(async (action) => {
       const sprite = action.remote;
       try {
         const pngBlob = action.downloadProcessed
-          ? await fetchRequiredBlob(sprite.url, `${fighter.name} ${sprite.animationName} sprite`, requestContext)
+          ? await fetchRequiredBlob(sprite.url, `${fighter.name} ${sprite.animationName} sprite`, requestContext, options)
           : action.existing?.pngBlob ?? null;
         if (!pngBlob) {
           spritesSkipped += 1;
           return;
         }
         const downloadedRawBlob = action.downloadRaw
-          ? await fetchOptionalBlob(sprite.rawUrl, `${fighter.name} ${sprite.animationName} raw sprite`, requestContext)
+          ? await fetchOptionalBlob(sprite.rawUrl, `${fighter.name} ${sprite.animationName} raw sprite`, requestContext, options)
           : null;
         const rawPngBlob = downloadedRawBlob ?? action.existing?.rawPngBlob ?? null;
         if (action.downloadRaw && sprite.rawUrl && !downloadedRawBlob) {
@@ -1281,6 +1334,7 @@ export async function downloadCloudFighterToLocal(
           spriteRawAssetsSkipped += 1;
         }
         if (!action.downloadProcessed && action.downloadRaw && !downloadedRawBlob) return;
+        assertCurrent();
         await setCachedArchivedSprite({
           ownerScope,
           versionId: action.existing?.versionId ?? sprite.id,
@@ -1303,26 +1357,40 @@ export async function downloadCloudFighterToLocal(
         } as CachedSprite & { qualityTier: CloudQualityTier }, { preserveVersionId: Boolean(sprite.id) });
         spritesImported += 1;
       } catch (err: any) {
-        if (err instanceof ApiSessionChangedError) throw err;
+        assertCurrent();
+        if (err instanceof ApiSessionChangedError || err instanceof ApiRequestTimeoutError) throw err;
         spritesSkipped += 1;
         debugWarn(`[Cloud] Sprite skipped for ${fighter.name}:`, err?.message ?? err);
+      } finally {
+        spritesCompleted += 1;
+        if (!options.signal?.aborted) {
+          options.onProgress?.({ phase: 'downloading', completed: spritesCompleted, total: spritePlan.length });
+        }
       }
     }));
   }
 
-  const remoteRosterComplete = isCompleteCloudFighterRoster(fighter);
+  assertCurrent();
+  const remoteRosterComplete = options.gameMode
+    ? isCloudFighterReadyForMode(fighter, options.gameMode)
+    : isCompleteCloudFighterRoster(fighter);
   if (!remoteRosterComplete && !options.allowIncomplete) {
     throw new Error(`Cloud fighter ${fighter.name} has no complete animation pack (${missingCloudAssetPackSummary(fighter.sprites)}).`);
   }
 
-  const playableRefs = cloudPlayableSpriteRefs(spriteVersions);
+  // Preserve all authoritative pointers when one game only needs a subset.
+  // Previously cached moves remain available for the other game modes.
+  const playableRefs = cloudPlayableSpriteRefs(fighter.sprites);
+  const requestedRefs = cloudPlayableSpriteRefs(spriteVersions);
   const refreshedVersions = await getAllSpriteVersionsForHash(photoHash, ownerScope);
   await fingerprintSprites(refreshedVersions);
   const exactPlayableSprites = selectPlayableCachedSprites(refreshedVersions, playableRefs);
   const availableCurrentAnimations = new Set(exactPlayableSprites.map((sprite) => sprite.animationName));
-  const allRemoteCurrentSpritesAvailable = inferFighterAssetPacks(exactPlayableSprites).some((pack) => pack.complete) &&
-    Object.values(playableRefs).length === selectPlayableCloudSprites(fighter.sprites).length &&
-    Object.values(playableRefs).every((ref) =>
+  const localRosterComplete = options.gameMode
+    ? resolveFighterModeReadiness(exactPlayableSprites, options.gameMode, fighter).kind !== 'unavailable'
+    : inferFighterAssetPacks(exactPlayableSprites).some((pack) => pack.complete);
+  const allRemoteCurrentSpritesAvailable = localRosterComplete &&
+    Object.values(requestedRefs).every((ref) =>
       Boolean(ref.contentHash) && availableCurrentAnimations.has(ref.animationName),
     );
 
@@ -1364,14 +1432,16 @@ export async function downloadCloudFighterToLocal(
         existingMeta?.cloudSourceHashes?.[kind] ?? null,
       ])),
     },
-    cloudSpriteVersionCount: spritesSkipped === 0 && spriteRawAssetsSkipped === 0
+    cloudSpriteVersionCount: options.gameMode ? exactPlayableSprites.length : spritesSkipped === 0 && spriteRawAssetsSkipped === 0
       ? remoteSpriteVersionCount
       : existingMeta?.cloudSpriteVersionCount ?? 0,
     cloudPlayableSpriteRefs: playableRefs,
     fighterAssetPacks: cachedAssetPackMetadata(exactPlayableSprites),
   } satisfies CachedMeta & { qualityTier: CloudQualityTier };
 
+  assertCurrent();
   await setCachedMeta(meta);
+  assertCurrent();
   await setCloudPlayableSpriteRefs(photoHash, playableRefs, ownerScope);
 
   if (!options.allowIncomplete && !allRemoteCurrentSpritesAvailable) {
@@ -1379,6 +1449,9 @@ export async function downloadCloudFighterToLocal(
       `${fighter.name} did not finish downloading a complete animation pack (${missingCloudAssetPackSummary(exactPlayableSprites)}). Retry the sprite download.`,
     );
   }
+
+  assertCurrent();
+  options.onProgress?.({ phase: 'ready', completed: spritePlan.length, total: spritePlan.length });
 
   return {
     fighterId: fighter.id,
@@ -1394,7 +1467,7 @@ export async function downloadArcadeFighterToLocal(
   options: {
     includeHighResolutionAssets?: boolean;
     includeSourceAssets?: boolean;
-  } = {},
+  } & Pick<CloudImportOptions, 'gameMode' | 'signal' | 'assetTimeoutMs' | 'onProgress'> = {},
 ): Promise<CloudImportResult> {
   if (!fighter.arcade || !fighter.public) {
     throw new Error(`${fighter.name} is not an active Arcade fighter.`);
@@ -1418,6 +1491,10 @@ export async function downloadArcadeFighterToLocal(
     includeRawAssets: includeHighResolutionAssets,
     includeSourceAssets: options.includeSourceAssets,
     cloudManagement: 'arcade',
+    gameMode: options.gameMode,
+    signal: options.signal,
+    assetTimeoutMs: options.assetTimeoutMs,
+    onProgress: options.onProgress,
   });
 }
 

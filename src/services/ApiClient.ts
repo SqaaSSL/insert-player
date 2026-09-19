@@ -28,6 +28,42 @@ export class ApiSessionChangedError extends Error {
   }
 }
 
+export class ApiRequestTimeoutError extends Error {
+  constructor() {
+    super('This is taking too long. Check your connection and try again.');
+    this.name = 'ApiRequestTimeoutError';
+  }
+}
+
+/** Keep the deadline active through response-body reads, not just response headers. */
+export async function withApiRequestTimeout<T>(
+  action: (signal: AbortSignal) => Promise<T>,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<T> {
+  options.signal?.throwIfAborted();
+  const controller = new AbortController();
+  const abort = () => controller.abort(options.signal?.reason);
+  options.signal?.addEventListener('abort', abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new ApiRequestTimeoutError()), options.timeoutMs ?? 30_000);
+  let rejectAborted: () => void = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAborted = () => reject(controller.signal.reason);
+    controller.signal.addEventListener('abort', rejectAborted, { once: true });
+  });
+  try {
+    // The race also settles if token retrieval or a body reader fails to heed
+    // the signal. Callers still check the signal before committing their result.
+    return await Promise.race([action(controller.signal), aborted]);
+  } catch (error) {
+    controller.abort(error);
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    options.signal?.removeEventListener('abort', abort);
+    controller.signal.removeEventListener('abort', rejectAborted);
+  }
+}
+
 export function configureApiAuth(getToken: TokenGetter | null): void {
   tokenGetter = getToken;
   authRevision += 1;
@@ -150,11 +186,13 @@ export async function apiFetch(
   context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<Response> {
   assertApiRequestContextCurrent(context);
+  init.signal?.throwIfAborted();
   const targetUrl = apiUrl(input, context);
   const headers = new Headers(init.headers);
   const attachesAuth = shouldAttachAuth(targetUrl, context);
   const token = attachesAuth ? await context.tokenGetter?.() : null;
   assertApiRequestContextCurrent(context);
+  init.signal?.throwIfAborted();
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `${context.authorizationScheme ?? 'Bearer'} ${token}`);
   }
