@@ -11,6 +11,13 @@ import {
   AURA_RECORDING_MAX_JSON_CHARACTERS, isValidAuraRecording, parseAuraRecording,
   type AuraRecording, type AuraRecordingConfig,
 } from './AuraRecording.ts';
+import type { AuraMatchSelection } from './AuraChoreography.ts';
+
+const chosenMoves: AuraMatchSelection = [
+  ['aura_six_seven', 'aura_floor_worm', 'aura_six_seven'],
+  ['aura_glide', 'aura_one_leg', 'aura_mog_check'],
+  ['aura_floor_worm', 'aura_six_seven', 'aura_glide'],
+];
 
 function config(): AuraRecordingConfig {
   const chart = createAuraChart(67, 'viral');
@@ -43,6 +50,45 @@ function finalized(): AuraRecording {
 }
 
 describe('AuraRecorder immutable local event journal', () => {
+  it('round-trips nine ordered positions including repeated gestures, and rejects obsolete flat selections', () => {
+    const auraRoutines = [chosenMoves, null] as const;
+    const setup = { ...config(), auraRoutines };
+    const recorder = new AuraRecorder(setup);
+    recorder.record(0, passive());
+    recorder.finish(summary());
+    const saved = recorder.toRecording();
+    expect(parseAuraRecording(JSON.stringify(saved))?.config.auraRoutines).toEqual(auraRoutines);
+    expect(parseAuraRecording(JSON.stringify({ ...saved, config: { ...setup,
+      auraRoutines: [['aura_six_seven', 'unknown', 'aura_shrug'], null] } }))).toBeNull();
+    expect(parseAuraRecording(JSON.stringify({ ...saved, config: { ...setup,
+      auraRoutines: [chosenMoves[0], null] } }))).toBeNull();
+    expect(parseAuraRecording(JSON.stringify({ ...saved, config: { ...setup,
+      auraRoutines: [chosenMoves.flat(), null] } }))).toBeNull();
+    expect(parseAuraRecording(JSON.stringify({ ...saved, config: { ...setup,
+      auraRoutines: [[chosenMoves[0], ['aura_glide', 'unknown', 'aura_shrug'], chosenMoves[2]], null] } }))).toBeNull();
+  });
+
+  it('pins both online selections before playing and cannot change them after an event', () => {
+    const recorder = new AuraRecorder(config());
+    const local = chosenMoves;
+    const remote = [chosenMoves[2], chosenMoves[0], chosenMoves[1]] as const;
+    recorder.setRoutines([local, remote]);
+    expect(recorder.toRecording().config.auraRoutines).toEqual([local, remote]);
+    recorder.record(0, passive());
+    expect(() => recorder.setRoutines([null, null])).toThrow('recorder.started');
+    expect(recorder.toRecording().config.auraRoutines).toEqual([local, remote]);
+  });
+
+  it('copies every selected round and position when pinning the online configuration', () => {
+    const recorder = new AuraRecorder(config());
+    const mutable = JSON.parse(JSON.stringify(chosenMoves)) as string[][];
+    recorder.setRoutines([mutable as unknown as AuraMatchSelection, null]);
+    mutable[0][0] = 'aura_one_leg';
+    mutable[1][2] = 'aura_floor_worm';
+    mutable[2].reverse();
+    expect(recorder.toRecording().config.auraRoutines).toEqual([chosenMoves, null]);
+  });
+
   it('retains the actual bundled trial cast without inventing cloud identities', () => {
     const setup: AuraRecordingConfig = { ...config(), p1Name: 'DONALD TRUMP', p2Name: 'LAMINE YAMAL',
       p1CloudFighterId: null, p2CloudFighterId: null, auraTrialPreset: 'trump-lamine' };

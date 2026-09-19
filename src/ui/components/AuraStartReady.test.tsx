@@ -56,6 +56,29 @@ describe('Aura start choice', () => {
     expect(onStart).toHaveBeenCalledWith(false);
   });
 
+  it('offers optional customization separately from starting or practicing', () => {
+    const onStart = vi.fn();
+    const onCustomize = vi.fn();
+    const view = AuraStartReady({ ...props, onStart, onCustomize });
+    find(view, 'aura-start-ready__customize').props.onClick();
+    expect(onCustomize).toHaveBeenCalledOnce();
+    expect(onStart).not.toHaveBeenCalled();
+    const busy = AuraStartReady({ ...props, busy: true, onCustomize });
+    find(busy, 'aura-start-ready__customize').props.onClick();
+    expect(onCustomize).toHaveBeenCalledOnce();
+  });
+
+  it('leaves Back usable when a departed rival makes starting unavailable', () => {
+    const onStart = vi.fn();
+    const onExit = vi.fn();
+    const view = AuraStartReady({ ...props, onStart, onExit, error: 'Your rival left.' });
+    find(view, 'aura-start-ready__primary').props.onClick();
+    find(view, 'aura-start-ready__back').props.onClick();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onExit).toHaveBeenCalledOnce();
+    expect(find(view, 'aura-start-ready__back').props.disabled).toBe(false);
+  });
+
   it('cannot submit either choice while the start is already in progress', () => {
     const onStart = vi.fn();
     const onExit = vi.fn();

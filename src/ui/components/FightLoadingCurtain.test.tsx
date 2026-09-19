@@ -97,7 +97,7 @@ describe('FightLoadingCurtain', () => {
 
     expect(markup).toContain('is-aura');
     expect(markup).toContain('AURA BATTLE');
-    expect(markup).toContain('SAME ROUTINE');
+    expect(markup).toContain('YOUR MOVES');
     expect(markup).toContain('WHO OWNS THE ROOM?');
     expect(markup).toContain('ALTERNATING TURNS');
     expect(markup).toContain('HIT ON BEAT');

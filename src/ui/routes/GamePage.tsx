@@ -16,6 +16,7 @@ import {
   RUSH_COMPANION_ORDER_EVENT,
   RUSH_RUN_COMPLETE_EVENT,
   AURA_BATTLE_COMPLETE_EVENT,
+  AURA_REMATCH_CONFIG_EVENT,
   RUNTIME_READY_EVENT,
   buildMatchSeed,
   type MatchAction,
@@ -47,6 +48,8 @@ import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AuraStartReady } from '../components/AuraStartReady.tsx';
+import { AuraRoutineEditor, auraRoutinePlayerSlots } from '../components/AuraRoutineEditor.tsx';
+import type { AuraSelectedRoutines } from '../../game/aura/AuraChoreography.ts';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
@@ -138,7 +141,33 @@ export function GamePage({
   const [onlineRematch, setOnlineRematch] = useState<OnlineRematchStateDetail>({ state: 'idle' });
   const isRush = launchTarget.sceneKey === 'RushScene';
   const isAura = launchTarget.sceneKey === 'AuraScene';
+  const [auraSelection, setAuraSelection] = useState<{
+    target: GamePageProps['launchTarget']; routines: AuraSelectedRoutines; data: MatchSceneData;
+  } | null>(null);
+  const [editingAuraRoutine, setEditingAuraRoutine] = useState<{
+    target: GamePageProps['launchTarget']; phase: 'startup' | 'results';
+  } | null>(null);
+  const [pendingAuraRoutines, setPendingAuraRoutines] = useState<{
+    target: GamePageProps['launchTarget']; token: number; routines: AuraSelectedRoutines;
+  } | null>(null);
+  const [auraRematchConfig, setAuraRematchConfig] = useState<{ target: GamePageProps['launchTarget']; data: MatchSceneData } | null>(null);
+  const runtimeLaunchTarget = useMemo(() => auraSelection?.target === launchTarget
+    ? { ...launchTarget, data: { ...auraSelection.data, auraRoutines: auraSelection.routines } }
+    : launchTarget, [launchTarget, auraSelection]);
+  const editorData = auraRematchConfig?.target === launchTarget ? auraRematchConfig.data : runtimeLaunchTarget.data;
+  const canEditAuraRoutine = isAura && auraRoutinePlayerSlots(editorData).length > 0;
+  const auraEditorOpen = editingAuraRoutine?.target === launchTarget;
+  const auraSelectionError = netState?.abandoned ? 'Your rival left. Go back to the lobby to find another duel.'
+    : netState?.desynced ? 'This duel has ended. Go back to the lobby to play again.' : null;
   const online = isRush ? null : (launchTarget.data.online ?? null);
+  useEffect(() => {
+    if (!isAura) return;
+    const onConfig = (event: WindowEventMap[typeof AURA_REMATCH_CONFIG_EVENT]) => {
+      setAuraRematchConfig({ target: launchTarget, data: event.detail });
+    };
+    window.addEventListener(AURA_REMATCH_CONFIG_EVENT, onConfig);
+    return () => window.removeEventListener(AURA_REMATCH_CONFIG_EVENT, onConfig);
+  }, [launchTarget, isAura]);
   const trial = launchTarget.data.experience === 'trial';
   const onboardingDebut = launchTarget.data.experience === 'onboarding';
   const trialPlayerName = launchTarget.data.p1Name?.trim() || 'Player One';
@@ -393,6 +422,7 @@ export function GamePage({
       if (trial) rememberCompletedAuraTrial();
       onComplete();
       setAuraSummary(event.detail);
+      setEditingAuraRoutine(null);
       setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
       if (onboardingDebut) void saveAuraDebut();
     };
@@ -551,6 +581,8 @@ export function GamePage({
         startedAt = performance.now();
         auraLifecycleRef.current = { token: detail.token, seed: detail.seed, phase: 'loading' };
         setAuraControlledSlot(detail.localControlledSlot);
+        setEditingAuraRoutine(null);
+        setPendingAuraRoutines(null);
         setAuraPendingStart(null);
         setAuraOnboarding(null);
         setLoadingPhase('loading');
@@ -582,7 +614,7 @@ export function GamePage({
     void import('../../game/createGame.ts')
       .then(({ createGame }) => {
         if (disposed) return;
-        game = createGame('game-container', launchTarget);
+        game = createGame('game-container', runtimeLaunchTarget);
       })
       .catch((err: unknown) => {
         if (!disposed) {
@@ -603,7 +635,7 @@ export function GamePage({
       game?.destroy(true);
       game = null;
     };
-  }, [launchTarget]);
+  }, [runtimeLaunchTarget]);
 
   const startCombat = () => {
     if (!combatPendingStart || loadingPhase !== 'hidden' || onlineMatch
@@ -683,23 +715,27 @@ export function GamePage({
                 : 'Go! Hit the beat.'}
         </p>
       ) : null}
-      {auraAwaitingInput && !paused ? (
+      {auraAwaitingInput && !paused && !auraEditorOpen ? (
         <AuraStartReady
-          playerName={launchTarget.data.p1Name ?? 'Player One'}
-          rivalName={launchTarget.data.p2Name ?? 'Player Two'}
-          practiceAvailable={canGuideAuraFirstBattle(launchTarget.data)}
+          playerName={(editorData.online?.localSlot === 1 ? editorData.p2Name : editorData.p1Name) ?? 'Player One'}
+          rivalName={(editorData.online?.localSlot === 1 ? editorData.p1Name : editorData.p2Name) ?? 'Player Two'}
+          practiceAvailable={canGuideAuraFirstBattle(editorData)}
           practiceRecommended={auraPracticeRecommended}
           busy={paused}
+          error={auraSelectionError}
+          onCustomize={canEditAuraRoutine ? () => setEditingAuraRoutine({ target: launchTarget, phase: 'startup' }) : undefined}
           onExit={onExit}
           onStart={practice => {
-            if (paused) return;
+            if (paused || auraSelectionError) return;
             if (practice) trackProductEvent('onboarding_started', { game: 'aura' });
             else if (auraPracticeRecommended) {
               rememberAuraOnboarding();
               trackProductEvent('onboarding_skipped', { game: 'aura' });
             }
             window.dispatchEvent(new CustomEvent(AURA_STARTUP_READY_EVENT, {
-              detail: { token: auraStartup!.token, seed: auraStartup!.seed, practice },
+              detail: { token: auraStartup!.token, seed: auraStartup!.seed, practice,
+                ...(pendingAuraRoutines?.target === launchTarget && pendingAuraRoutines.token === auraStartup!.token
+                  ? { auraRoutines: pendingAuraRoutines.routines } : {}) },
             }));
           }}
         />
@@ -968,6 +1004,7 @@ export function GamePage({
       ) : null}
       {auraSummary && matchActionsVisible ? (
         <AuraBattleResults
+          active={!auraEditorOpen}
           summary={auraSummary}
           finisher={battleCapture && auraCapture?.state !== 'processing' ? finisher : <div className="aura-results__finisher-status" role="status">
             <button type="button" className="asf-btn" disabled>Fatality · 1 credit</button>
@@ -987,6 +1024,9 @@ export function GamePage({
             setAuraSummary(null);
             chooseMatchAction('run_it_back');
           }}
+          onEditRoutine={canEditAuraRoutine && !online ? () => {
+            setEditingAuraRoutine({ target: launchTarget, phase: 'results' });
+          } : undefined}
           onRemix={online ? undefined : () => {
             setAuraSummary(null);
             chooseMatchAction('remix');
@@ -1037,22 +1077,50 @@ export function GamePage({
   );
 
   return (
-    <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ' is-combat'}`}>
-      {isAura ? <div className="game-shell__aura-frame">{content}</div> : (
-        <>
-          <div className="game-shell__combat-frame">{content}</div>
-          {!launchTarget.data.cpuVsCpu && (
-            <FightControlsHint
-              mode={isRush ? 'rush' : 'fight'}
-              twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
-              playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
-              hudPlayerIndex={online?.localSlot ?? 0}
-              disabled={loadingPhase !== 'hidden' || paused || matchActionsVisible || Boolean(rushSummary)}
-              inputResetKey={combatPendingStart?.startToken ?? 0}
-            />
-          )}
-        </>
-      )}
-    </div>
+    <>
+      <div hidden={auraEditorOpen} className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ' is-combat'}`}>
+        {isAura ? <div className="game-shell__aura-frame">{content}</div> : (
+          <>
+            <div className="game-shell__combat-frame">{content}</div>
+            {!launchTarget.data.cpuVsCpu && (
+              <FightControlsHint
+                mode={isRush ? 'rush' : 'fight'}
+                twoPlayers={!online && (isRush ? launchTarget.data.vsAI !== true : launchTarget.data.vsAI === false)}
+                playerLabel={online?.localSlot === 1 ? 'P2' : 'P1'}
+                hudPlayerIndex={online?.localSlot ?? 0}
+                disabled={loadingPhase !== 'hidden' || paused || matchActionsVisible || Boolean(rushSummary)}
+                inputResetKey={combatPendingStart?.startToken ?? 0}
+              />
+            )}
+          </>
+        )}
+      </div>
+      {auraEditorOpen ? <AuraRoutineEditor
+        key={`${launchTarget.sceneKey}:${buildMatchSeed(editorData)}`}
+        data={editorData}
+        error={auraSelectionError}
+        initialRoutines={editingAuraRoutine.phase === 'startup' && pendingAuraRoutines?.target === launchTarget
+          && pendingAuraRoutines.token === auraStartup?.token ? pendingAuraRoutines.routines : undefined}
+        onPlay={routines => {
+          if (auraSelectionError) return;
+          if (editingAuraRoutine.phase === 'startup') {
+            if (!auraAwaitingInput || !auraStartup) return;
+            setPendingAuraRoutines({ target: launchTarget, token: auraStartup.token, routines });
+          } else {
+            setAuraSelection({ target: launchTarget, routines, data: editorData });
+            setLoadingPhase('loading');
+            setAuraSummary(null);
+            setAuraCapture(null);
+            setAuraStartup(null);
+            setAuraPendingStart(null);
+            setAuraOnboarding(null);
+            setMatchActionsVisible(false);
+            setPaused(false);
+          }
+          setEditingAuraRoutine(null);
+        }}
+        onExit={() => setEditingAuraRoutine(null)}
+      /> : null}
+    </>
   );
 }

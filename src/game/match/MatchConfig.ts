@@ -5,6 +5,7 @@ import type { AuraDifficultyId } from '../aura/AuraConfig.ts';
 import type { AuraLane } from '../aura/AuraChart.ts';
 import type { AuraPlayerScore } from '../aura/AuraBattle.ts';
 import type { AuraChallenge, AuraChallengeRoutine } from '../aura/AuraChallenge.ts';
+import type { AuraSelectedRoutines } from '../aura/AuraChoreography.ts';
 import { ROUNDS_TO_WIN } from '../constants.ts';
 
 export type MatchExperience = 'standard' | 'trial' | 'onboarding';
@@ -83,6 +84,8 @@ export interface MatchSceneData {
   auraDifficulty?: AuraDifficultyId;
   /** Aura track id from AuraTracks.ts; omitted lets the seed pick one. */
   auraTrackId?: string;
+  /** Each player's three rounds of three chosen gestures. Null uses the seeded routine. */
+  auraRoutines?: AuraSelectedRoutines;
   /** Explicit offline quickplay cast; never an owned or online identity. */
   auraTrialPreset?: 'trump-lamine';
   /** Unverified asynchronous social target; never an online/ranked result. */
@@ -138,6 +141,8 @@ export const RUSH_RUN_COMPLETE_EVENT = 'asf-rush-run-complete';
 export const RUSH_COMPANION_ORDER_EVENT = 'asf-rush-companion-order';
 export const AURA_INPUT_EVENT = 'asf-aura-input';
 export const AURA_BATTLE_COMPLETE_EVENT = 'asf-aura-battle-complete';
+/** Local editor handoff only; never included in public results or recordings. */
+export const AURA_REMATCH_CONFIG_EVENT = 'asf-aura-rematch-config';
 export const ONLINE_REMATCH_STATE_EVENT = 'asf-online-rematch-state';
 
 export type MatchAction = 'run_it_back' | 'remix' | 'menu';
@@ -307,6 +312,7 @@ declare global {
     [RUSH_COMPANION_ORDER_EVENT]: CustomEvent<RushCompanionOrderDetail>;
     [AURA_INPUT_EVENT]: CustomEvent<AuraInputDetail>;
     [AURA_BATTLE_COMPLETE_EVENT]: CustomEvent<AuraBattleCompleteDetail>;
+    [AURA_REMATCH_CONFIG_EVENT]: CustomEvent<MatchSceneData>;
     [ONLINE_REMATCH_STATE_EVENT]: CustomEvent<OnlineRematchStateDetail>;
     [PAUSE_EVENT]: CustomEvent<PauseDetail>;
   }
