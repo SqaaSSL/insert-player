@@ -3297,8 +3297,8 @@ function assertLaunchMetadataIsWired() {
     'public/assets/app-icon-512.png',
     'public/assets/app-maskable-512.png',
     'public/assets/social-card-v6.png',
-    'public/assets/social-card-v11.jpg',
-    'public/assets/social-card-v11.webp',
+    'public/assets/social-card-v12.jpg',
+    'public/assets/social-card-v12.webp',
     'public/assets/social-card.svg',
     'public/assets/social-card-visual-v3.png',
     'scripts/assets/social-card.html',
@@ -3419,8 +3419,8 @@ function assertLaunchMetadataIsWired() {
 function assertLaunchRasterAssetsAreFresh() {
   const assets = [
     ...SOCIAL_CARD_SOURCES.flatMap(source => [
-      [source, 'public/assets/social-card-v11.jpg', 1200, 630, 300_000],
-      [source, 'public/assets/social-card-v11.webp', 1200, 630, 150_000],
+      [source, 'public/assets/social-card-v12.jpg', 1200, 630, 300_000],
+      [source, 'public/assets/social-card-v12.webp', 1200, 630, 150_000],
     ]),
     ['public/assets/app-icon.svg', 'public/assets/app-icon-192.png', 192, 192],
     ['public/assets/app-icon.svg', 'public/assets/app-icon-512.png', 512, 512],
