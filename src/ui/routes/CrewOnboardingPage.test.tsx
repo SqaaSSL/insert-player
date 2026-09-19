@@ -53,18 +53,19 @@ describe('Crew onboarding presentation', () => {
 
     expect(markup).toContain('product-entry');
     expect(markup).toContain('Aura onboarding');
-    expect(markup).toContain('Build Your Crew');
+    expect(markup).toContain('Your First Aura Run');
     expect(markup).toContain('1 · Learn Aura');
     expect(markup).toContain('2 · Create your Rookie');
     expect(markup).toContain('3 · Aura debut');
     expect(markup).toContain('4 · Build a Crew');
     expect(markup).toContain('5 · Invite Player Two');
     expect(markup).toContain('6 · Choose a home stage');
-    expect(markup).toContain('Create Crew &amp; Share Rookie');
+    expect(markup).toContain('Loading your next mission');
+    expect(markup).not.toContain('Create Crew &amp; Share Rookie');
     expect(markup).not.toContain('Change branding');
   });
 
-  it('offers Crew as the minimum visible sharing destination', () => {
+  it('does not offer sharing actions before account progress has loaded', () => {
     const markup = renderToStaticMarkup(
       <CrewOnboardingPage
         {...baseProps}
@@ -73,8 +74,8 @@ describe('Crew onboarding presentation', () => {
       />,
     );
 
-    expect(markup).toContain('Share With Night Shift');
-    expect(markup).toContain('original photo and raw files stay out of the shared copy');
+    expect(markup).not.toContain('Share With Night Shift');
+    expect(markup).toContain('Loading your next mission');
     expect(markup).not.toContain('Make Private');
     expect(markup).not.toContain('Keep Private');
   });
@@ -85,12 +86,22 @@ describe('Crew onboarding presentation', () => {
         {...baseProps}
         authStatus="signed-out"
         onSignIn={vi.fn()}
+        onPlayTrial={vi.fn()}
       />,
     );
 
-    expect(markup).toContain('Save Your Crew');
+    expect(markup).toContain('Your First Aura Run');
+    expect(markup).toContain('Try Aura First');
     expect(markup).toContain('Sign In To Continue');
     expect(markup).toContain('Create a Crew · Invite Player Two · Choose one shared stage together');
+  });
+
+  it('resumes the real create or debut checkpoint instead of pretending they are done', () => {
+    const progress = { shared: false, canInviteCrew: false, crewStageReady: false, invitationAccepted: false };
+    expect(resolveCrewMissionStep({ ...progress, hasFighter: false, debutComplete: false })).toBe('create');
+    expect(resolveCrewMissionStep({ ...progress, hasFighter: true, debutComplete: false })).toBe('debut');
+    expect(resolveCrewMissionStep({ ...progress, hasFighter: true, debutComplete: true })).toBe('crew');
+    expect(resolveCrewMissionStep({ ...progress, hasFighter: true, debutComplete: false, serverComplete: true })).toBe('complete');
   });
 
   it('presents the one-per-Crew stage after inviting the players who should decide it', () => {

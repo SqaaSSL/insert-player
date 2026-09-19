@@ -1,5 +1,6 @@
 import { generateId, hashString } from './auth';
 import { canManageCrew } from './crewAuthorization';
+import { crewStageEligibilityError, getCrewStageEligibility } from './crewStageEligibility';
 import { readMultipartFormData } from './requestBody';
 import type { AuthContext, Env } from './types';
 
@@ -168,9 +169,30 @@ export async function getCrewStageStatus(
   if (organizationId instanceof Response) return organizationId;
   await clearExpiredDirectReservation(env, organizationId);
   const stage = await getCrewStageRow(env, organizationId);
+  const eligibility = !stage && canManageCrew(auth)
+    ? await getCrewStageEligibility(env, organizationId)
+    : null;
+  const canResumeCreate = stage?.status === 'reserved'
+    && stage.created_by_user_id === auth.userId
+    && Boolean(stage.generation_charge_id)
+    && canManageCrew(auth)
+    && Boolean(await env.DB.prepare(`
+      SELECT 1 AS resumable
+      FROM generation_charges charge
+      JOIN provider_sessions session ON session.charge_id = charge.id
+      WHERE charge.id = ? AND charge.user_id = ? AND charge.reason = 'crew_stage_included'
+        AND charge.status = 'reserved' AND datetime(charge.expires_at) > datetime('now')
+        AND session.status = 'active' AND datetime(session.expires_at) > datetime('now')
+        AND session.provider_calls_used = 0
+      LIMIT 1
+    `).bind(stage.generation_charge_id, auth.userId).first());
   return json({
     claimState: stage?.status ?? 'available',
-    canCreate: canManageCrew(auth) && !stage,
+    canCreate: Boolean(eligibility?.eligible),
+    canResumeCreate: Boolean(canResumeCreate),
+    eligibilityReason: eligibility && !eligibility.eligible
+      ? (eligibility.unavailable ? 'crew_stage_verification_unavailable' : 'crew_stage_friend_required')
+      : null,
     stage: stage?.status === 'ready' ? serializeReadyStage(request, stage) : null,
   });
 }
@@ -221,6 +243,8 @@ export async function uploadCrewStage(
         code: claim.status === 'ready' ? 'crew_stage_already_claimed' : 'crew_stage_reserved',
       }, 409);
     }
+    const eligibilityError = crewStageEligibilityError(await getCrewStageEligibility(env, organizationId));
+    if (eligibilityError) return eligibilityError;
     const stageId = generateId();
     const reservationExpiresAt = new Date(
       Date.now() + DIRECT_UPLOAD_RESERVATION_MINUTES * 60 * 1000,
@@ -275,7 +299,10 @@ export async function uploadCrewStage(
   }
 
   const contentHash = await hashString(bytes);
-  const blobKey = `crews/${organizationId}/stages/${claim.id}.png`;
+  // Each upload writes its own object. Concurrent forged-upload retries may
+  // race to finalize the same claim; the losing request must never overwrite
+  // or delete the winner's image.
+  const blobKey = `crews/${organizationId}/stages/${claim.id}/${generateId()}.png`;
   try {
     await env.SPRITES.put(blobKey, bytes, { httpMetadata: { contentType: 'image/png' } });
     const ready = await env.DB.prepare(`

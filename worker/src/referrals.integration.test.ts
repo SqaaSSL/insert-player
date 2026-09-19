@@ -1,5 +1,8 @@
 import { Miniflare } from 'miniflare';
+import { readFileSync } from 'node:fs';
+import { URL as NodeURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { OrganizationInvitationAcceptedWebhookEvent, OrganizationMembershipWebhookEvent } from '@clerk/backend/webhooks';
 
 const {
   createOrganizationMembership,
@@ -32,12 +35,15 @@ vi.mock('@clerk/backend', () => ({
 import { AURA_ANIMATION_NAMES } from './fighterAssetPacks';
 import {
   acceptCrewInviteLink,
+  acceptReferralWebhook,
   createCrewInviteLink,
   createCrewInvitation,
   getOnboardingStatus,
   getReferralLanding,
   recordOnboardingDebut,
+  recordOnboardingTrial,
   referralRookiePasses,
+  revokeCrewWebhook,
 } from './referrals';
 import type { AuthContext, Env } from './types';
 
@@ -54,8 +60,14 @@ const SCHEMA = `
   CREATE TABLE users (
     id TEXT PRIMARY KEY,
     clerk_user_id TEXT,
-    display_name TEXT NOT NULL
+    display_name TEXT NOT NULL,
+    avatar_url TEXT,
+    email TEXT,
+    oauth_provider TEXT,
+    oauth_id TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
   );
+  CREATE TABLE clerk_user_tombstones (subject_hash TEXT PRIMARY KEY);
 
   CREATE TABLE fighters (
     id TEXT PRIMARY KEY,
@@ -148,7 +160,13 @@ const SCHEMA = `
 
 const runtimes: Miniflare[] = [];
 
-async function createBindings(): Promise<{ db: D1Database; env: Env }> {
+async function applyProgressMigration(db: D1Database): Promise<void> {
+  const sql = readFileSync(new NodeURL('../migrations/0044_onboarding_progress.sql', import.meta.url), 'utf8');
+  await db.batch(sql.replace(/^\s*--.*$/gm, '').split(';')
+    .map((statement) => statement.trim()).filter(Boolean).map((statement) => db.prepare(statement)));
+}
+
+async function createBindings(migrateProgress = true): Promise<{ db: D1Database; env: Env }> {
   const mf = new Miniflare({
     workers: [{
       config: {
@@ -175,6 +193,7 @@ async function createBindings(): Promise<{ db: D1Database; env: Env }> {
     .map((statement) => statement.trim())
     .filter(Boolean)
     .map((statement) => db.prepare(statement)));
+  if (migrateProgress) await applyProgressMigration(db);
   return {
     db,
     env: {
@@ -381,13 +400,14 @@ describe('Crew referral qualification', () => {
       role: 'org:member',
     });
     expect(await db.prepare(`
-      SELECT invitee_user_id, status, reward_eligible, oauth_identity_hmac
+      SELECT invitee_user_id, status, reward_eligible, oauth_identity_hmac, membership_confirmed_at
       FROM crew_referrals WHERE id = ?
     `).bind(invitation.id).first()).toMatchObject({
       invitee_user_id: INVITEE_ID,
       status: 'accepted',
       reward_eligible: 1,
       oauth_identity_hmac: expect.stringMatching(/^[a-f0-9]{64}$/),
+      membership_confirmed_at: expect.any(String),
     });
 
     const late = await acceptCrewInviteLink(
@@ -430,6 +450,8 @@ describe('Crew referral qualification', () => {
     await db.batch([
       db.prepare('INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)')
         .bind(INVITEE_ID, `clerk_${INVITEE_ID}`, 'Crew Player'),
+      db.prepare('INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)')
+        .bind(SECOND_INVITEE_ID, `clerk_${SECOND_INVITEE_ID}`, 'Player Two'),
       db.prepare(`
         INSERT INTO fighters (id, owner_user_id, name, photo_hash, quality_tier)
         VALUES (?, ?, 'Crew Rookie', 'crew-photo', 'rookie')
@@ -441,6 +463,10 @@ describe('Crew referral qualification', () => {
       `).bind(FIGHTER_ID, ORGANIZATION_ID, INVITEE_ID),
     ]);
 
+    expect(await (await getOnboardingStatus(env, auth())).json()).toMatchObject({
+      recommendedStep: 'debut', debutComplete: false, complete: false,
+    });
+    await recordOnboardingDebut(debutRequest(FIGHTER_ID), env, auth());
     const memberStatus = await getOnboardingStatus(env, auth());
     expect(await memberStatus.json()).toMatchObject({
       invitesSent: 0,
@@ -482,7 +508,8 @@ describe('Crew referral qualification', () => {
       UPDATE crew_referrals
       SET status = 'accepted', invitee_user_id = ?, accepted_at = datetime('now')
       WHERE id = ?
-    `).bind(INVITEE_ID, REFERRAL_ID).run();
+    `).bind(SECOND_INVITEE_ID, REFERRAL_ID).run();
+    getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'orgmem_player_two' }] });
     const adminAfterAcceptance = await getOnboardingStatus(env, auth(INVITEE_ID, FIGHTER_ID, 'org:admin'));
     expect(await adminAfterAcceptance.json()).toMatchObject({
       invitesSent: 1,
@@ -554,8 +581,12 @@ describe('Crew referral qualification', () => {
       ...auraSprites(db, SECOND_FIGHTER_ID, 30),
     ]);
     const qualified = await recordOnboardingDebut(debutRequest(FIGHTER_ID), env, auth());
-    expect(qualified.status).toBe(200);
-    expect(await qualified.json()).toEqual({
+    expect(await qualified.json()).toEqual({ recorded: true, referralQualified: false, reason: 'crew_not_active' });
+    expect(await referralRookiePasses(env, INVITER_ID)).toBe(0);
+    getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'orgmem_player_two' }] });
+    const joinedAndQualified = await recordOnboardingDebut(debutRequest(FIGHTER_ID), env, auth());
+    expect(joinedAndQualified.status).toBe(200);
+    expect(await joinedAndQualified.json()).toEqual({
       recorded: true,
       referralQualified: true,
       rewardGranted: true,
@@ -593,7 +624,159 @@ describe('Crew referral qualification', () => {
         crewName: 'Alpha Crew',
         inviterName: 'Inviter',
         status: 'rewarded',
+        inviteChannel: 'email',
       },
     });
   }, 15_000);
+
+  it('persists trial and owned-character debut without a referral, idempotently and only for the signed-in account', async () => {
+    const { db, env } = await createBindings();
+    await db.batch([INVITEE_ID, INVITER_ID].map((id) => db.prepare(
+      'INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)'
+    ).bind(id, `clerk_${id}`, 'Player')));
+    const player = { ...auth(), activeOrganizationId: null };
+    expect(await (await getOnboardingStatus(env, player)).json()).toMatchObject({
+      trialComplete: false, debutComplete: false, recommendedStep: 'create',
+    });
+    const trial = () => new Request('https://api.insertplayer.ai/api/onboarding/trial', {
+      method: 'POST', body: JSON.stringify({ userId: INVITER_ID }),
+    });
+    await recordOnboardingTrial(trial(), env, player);
+    expect(await db.prepare('SELECT user_id FROM user_onboarding_progress').all()).toMatchObject({
+      results: [{ user_id: INVITEE_ID }],
+    });
+    await db.batch([
+      db.prepare(`INSERT INTO fighters (id, owner_user_id, name, photo_hash, quality_tier)
+        VALUES (?, ?, 'First Rookie', 'progress-photo', 'rookie')`).bind(FIGHTER_ID, INVITEE_ID),
+      ...auraSprites(db, FIGHTER_ID, 100),
+    ]);
+    expect(await (await getOnboardingStatus(env, player)).json()).toMatchObject({
+      trialComplete: true, debutComplete: false, recommendedStep: 'debut',
+    });
+    const crossAccount = await recordOnboardingDebut(debutRequest(FIGHTER_ID), env, auth(INVITER_ID));
+    expect(crossAccount.status).toBe(403);
+    const debuted = await recordOnboardingDebut(debutRequest(FIGHTER_ID), env, player);
+    expect(await debuted.json()).toEqual({ recorded: true, referralQualified: false });
+    expect(await (await getOnboardingStatus(env, player)).json()).toMatchObject({
+      trialComplete: true, debutComplete: true, recommendedStep: 'crew',
+    });
+    await db.prepare(`UPDATE user_onboarding_progress SET trial_completed_at = '2026-09-01 10:00:00',
+      debut_completed_at = '2026-09-01 11:00:00' WHERE user_id = ?`).bind(INVITEE_ID).run();
+    await Promise.all([
+      recordOnboardingTrial(trial(), env, player),
+      recordOnboardingDebut(debutRequest(FIGHTER_ID), env, player),
+      recordOnboardingDebut(debutRequest(FIGHTER_ID), env, player),
+    ]);
+    expect((await db.prepare('SELECT * FROM user_onboarding_progress').all()).results).toEqual([{
+      user_id: INVITEE_ID, debut_fighter_id: FIGHTER_ID,
+      trial_completed_at: '2026-09-01 10:00:00', debut_completed_at: '2026-09-01 11:00:00',
+    }]);
+    expect(await (await getOnboardingStatus(env, auth(INVITER_ID))).json()).toMatchObject({
+      trialComplete: false, debutComplete: false, fighter: null,
+    });
+  });
+
+  it('does not mark a claimed link joined until Clerk membership succeeds and can safely retry the same invite', async () => {
+    const { db, env } = await createBindings();
+    await db.batch([INVITER_ID, INVITEE_ID].map((id) => db.prepare(
+      'INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)'
+    ).bind(id, `clerk_${id}`, 'Player')));
+    const admin = auth(INVITER_ID, FIGHTER_ID, 'org:admin');
+    const created = await createCrewInviteLink(env, admin);
+    const { invitation } = await created.json() as { invitation: { id: string } };
+    expect(await (await getReferralLanding(env, invitation.id)).json()).toMatchObject({
+      invitation: { inviteChannel: 'link' },
+    });
+    createOrganizationMembership.mockRejectedValueOnce(new Error('Clerk temporarily unavailable'));
+    await expect(acceptCrewInviteLink(env, auth(), invitation.id)).rejects.toThrow('Clerk temporarily unavailable');
+    expect(await db.prepare('SELECT status, membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ status: 'accepted', membership_confirmed_at: null });
+    expect(await (await getOnboardingStatus(env, admin)).json()).toMatchObject({ invitesAccepted: 0 });
+    getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'real_member' }] });
+    expect((await acceptCrewInviteLink(env, auth(), invitation.id)).status).toBe(200);
+    expect(await db.prepare('SELECT membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ membership_confirmed_at: expect.any(String) });
+    await db.prepare(`UPDATE crew_referrals SET membership_confirmed_at = '2026-09-01 12:00:00' WHERE id = ?`)
+      .bind(invitation.id).run();
+    expect((await acceptCrewInviteLink(env, auth(), invitation.id)).status).toBe(200);
+    expect(await db.prepare('SELECT membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ membership_confirmed_at: '2026-09-01 12:00:00' });
+    expect(await (await getOnboardingStatus(env, admin)).json()).toMatchObject({ invitesAccepted: 1 });
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_referrals').first()).toEqual({ count: 1 });
+  });
+
+  it('confirms legacy acceptance only for a verified live member and clears even rewarded memberships on deletion', async () => {
+    const { db, env } = await createBindings();
+    await db.prepare('INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)')
+      .bind(INVITER_ID, `clerk_${INVITER_ID}`, 'Inviter').run();
+    const admin = auth(INVITER_ID, FIGHTER_ID, 'org:admin');
+    const created = await createCrewInvitation(new Request('https://api.insertplayer.ai/api/crew/invitations', {
+      method: 'POST', body: JSON.stringify({ email: 'player@example.com' }),
+    }), env, admin);
+    const { invitation } = await created.json() as { invitation: { id: string } };
+    const webhook = { type: 'organizationInvitation.accepted', data: {
+      id: 'orginv_alpha', organization_id: ORGANIZATION_ID, user_id: 'clerk_webhook_player',
+      private_metadata: { insert_player_referral_id: invitation.id },
+    } } as unknown as OrganizationInvitationAcceptedWebhookEvent;
+    const clerkPlayer = {
+      id: 'clerk_webhook_player', createdAt: Date.now(), emailAddresses: [], primaryEmailAddressId: null,
+      firstName: 'Player', lastName: 'Two', imageUrl: null, externalAccounts: [],
+    };
+    getClerkUser.mockResolvedValue(clerkPlayer);
+    getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'member_legacy' }] });
+    expect(await acceptReferralWebhook(webhook, env)).toBe(true);
+    expect(await db.prepare('SELECT membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ membership_confirmed_at: null });
+    getClerkUser.mockResolvedValue({ ...clerkPlayer, externalAccounts: [{
+      provider: 'oauth_google', providerUserId: 'stable-webhook-google', verification: { status: 'verified' },
+    }] });
+    getOrganizationMembershipList.mockResolvedValue({ data: [] });
+    await acceptReferralWebhook(webhook, env);
+    expect(await db.prepare('SELECT membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ membership_confirmed_at: null });
+    getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'member_legacy' }] });
+    await acceptReferralWebhook(webhook, env);
+    expect(await db.prepare('SELECT membership_confirmed_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ membership_confirmed_at: expect.any(String) });
+    await db.prepare(`UPDATE crew_referrals SET status = 'rewarded', qualified_at = datetime('now') WHERE id = ?`)
+      .bind(invitation.id).run();
+    expect(await (await getOnboardingStatus(env, admin)).json()).toMatchObject({ invitesAccepted: 1 });
+    const deletion = { type: 'organizationMembership.deleted', data: {
+      organization: { id: ORGANIZATION_ID }, public_user_data: { user_id: 'clerk_webhook_player' },
+    } } as OrganizationMembershipWebhookEvent;
+    expect(await revokeCrewWebhook(deletion, env)).toBe(true);
+    expect(await db.prepare('SELECT status, membership_confirmed_at, qualified_at FROM crew_referrals WHERE id = ?')
+      .bind(invitation.id).first()).toEqual({ status: 'rewarded', membership_confirmed_at: null, qualified_at: expect.any(String) });
+    getOrganizationMembershipList.mockResolvedValue({ data: [] });
+    expect(await (await getOnboardingStatus(env, admin)).json()).toMatchObject({ invitesAccepted: 0 });
+    getOrganizationMembershipList.mockRejectedValue(new Error('Clerk unavailable'));
+    expect(await (await getOnboardingStatus(env, admin)).json()).toMatchObject({
+      invitesAccepted: 0, crewMembershipVerificationUnavailable: true,
+    });
+  });
+
+  it('migrates proven historical debut progress without claiming historical Crew membership', async () => {
+    const { db } = await createBindings(false);
+    await db.batch([INVITER_ID, INVITEE_ID, SECOND_INVITEE_ID].map((id) => db.prepare(
+      'INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, ?)'
+    ).bind(id, `clerk_${id}`, 'Player')));
+    await db.batch([
+      db.prepare(`INSERT INTO crew_referrals (id, clerk_organization_id, inviter_user_id, invitee_user_id,
+        invited_email_hmac, crew_name, inviter_display_name, status, qualified_at, expires_at)
+        VALUES (?, ?, ?, ?, 'one', 'Alpha', 'Inviter', 'rewarded', '2026-09-01 12:00:00', datetime('now', '+30 days'))`)
+        .bind(REFERRAL_ID, ORGANIZATION_ID, INVITER_ID, INVITEE_ID),
+      db.prepare(`INSERT INTO crew_referrals (id, clerk_organization_id, inviter_user_id, invitee_user_id,
+        invited_email_hmac, crew_name, inviter_display_name, status, expires_at)
+        VALUES (?, ?, ?, ?, 'two', 'Alpha', 'Inviter', 'accepted', datetime('now', '+30 days'))`)
+        .bind(SECOND_REFERRAL_ID, ORGANIZATION_ID, INVITER_ID, SECOND_INVITEE_ID),
+    ]);
+    await applyProgressMigration(db);
+    expect((await db.prepare('SELECT * FROM user_onboarding_progress').all()).results).toEqual([{
+      user_id: INVITEE_ID, trial_completed_at: '2026-09-01 12:00:00',
+      debut_completed_at: '2026-09-01 12:00:00', debut_fighter_id: null,
+    }]);
+    expect((await db.prepare('SELECT membership_confirmed_at FROM crew_referrals').all()).results)
+      .toEqual([{ membership_confirmed_at: null }, { membership_confirmed_at: null }]);
+    expect((await db.prepare('PRAGMA foreign_key_check').all()).results).toHaveLength(0);
+  });
 });

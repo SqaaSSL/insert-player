@@ -46,7 +46,7 @@ Sources reviewed: AP, 2 September 2026, [real aura competitions](https://www.wra
 
 ## Measurement limits
 
-ProductEvents records bounded device-only diagnostics, exportable under Credits. No analytics transmission or identity tracking was added. It is ready for a supervised playtest, but cannot establish acquisition conversion, unique-user return or viral coefficient across devices. Share actions distinguish link creation and completed video handoff; opening a share sheet alone is not evidence a friend received it.
+The initial release recorded bounded device-only diagnostics, exportable under Credits. The launch-readiness update adds first-party anonymous daily event totals and a separate report of existing operational outcomes; see [product measurement](product-measurement.md). It still cannot establish unique-user acquisition conversion, return or viral coefficient across devices. Share actions distinguish link creation and completed video handoff; opening a share sheet alone is not evidence a friend received it.
 
 ## Rollout boundary
 

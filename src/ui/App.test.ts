@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fightExitRoute, gameRouteForMatch, normalizeRoute } from './App';
+import { fightExitRoute, gameRouteForMatch, normalizeRoute, shouldGuideCreatedRookieDebut } from './App';
 
 describe('App route normalization', () => {
   it('preserves valid direct routes', () => {
@@ -54,5 +54,27 @@ describe('fight exit route', () => {
   it('preserves the landing return for trials and Play for offline matches', () => {
     expect(fightExitRoute({ experience: 'trial' })).toBe('/');
     expect(fightExitRoute(null)).toBe('/menu');
+  });
+});
+
+describe('first Rookie creation handoff', () => {
+  const status = { debutComplete: false, complete: false, fighter: { id: 'rookie-id', photoHash: 'rookie-photo', name: 'Player' } };
+  const creation = { tier: 'rookie' as const, source: 'landing' as const, returnTo: 'aura' as const };
+
+  it('guides a first Rookie from the landing or default character creation into its debut', () => {
+    expect(shouldGuideCreatedRookieDebut(creation, status, 'rookie-photo')).toBe(true);
+    expect(shouldGuideCreatedRookieDebut({ ...creation, tier: null, source: 'gallery' }, status, 'rookie-photo')).toBe(true);
+  });
+
+  it('preserves challenge returns and completed accounts rather than restarting missions', () => {
+    expect(shouldGuideCreatedRookieDebut({ ...creation, challenge: 'challenge-token' }, status, 'rookie-photo')).toBe(false);
+    expect(shouldGuideCreatedRookieDebut(creation, { ...status, debutComplete: true }, 'rookie-photo')).toBe(false);
+    expect(shouldGuideCreatedRookieDebut(creation, { ...status, complete: true }, 'rookie-photo')).toBe(false);
+  });
+
+  it('requires the completed creation to match the server-owned Rookie and tolerates unavailable status', () => {
+    expect(shouldGuideCreatedRookieDebut(creation, status, 'new-champion-photo')).toBe(false);
+    expect(shouldGuideCreatedRookieDebut(creation, { ...status, fighter: null }, 'rookie-photo')).toBe(false);
+    expect(shouldGuideCreatedRookieDebut(creation, null, 'rookie-photo')).toBe(false);
   });
 });

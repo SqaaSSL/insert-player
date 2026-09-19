@@ -1,4 +1,6 @@
 import type { FighterGameMode } from '../../services/FighterAssetPacks.ts';
+import type { OnboardingStatus } from '../../services/Crews.ts';
+import { Button } from '../components/Button.tsx';
 import { LaunchFilm } from '../components/LaunchFilm.tsx';
 import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, AuraRosterButton, type PlayGameHandler } from './GameLandingPage.tsx';
 import './product-entry.css';
@@ -10,15 +12,26 @@ export interface PlayPageProps {
   onOpenCharacters: () => void;
   onOpenChallenges: () => void;
   lastGame?: FighterGameMode | null;
+  onboardingStatus?: OnboardingStatus | null;
+  onContinueOnboarding?: () => void;
 }
 
-export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null }: PlayPageProps) {
+export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding }: PlayPageProps) {
   return (
     <div className="product-entry product-entry--play">
       <header className="product-entry__page-heading">
         <h1>Play</h1>
         {lastGame && <button type="button" className="product-entry__text-link" onClick={() => onPlay(lastGame)}>Continue {GAME_ENTRY_CONTENT[lastGame].name} →</button>}
       </header>
+
+      {onboardingStatus && !onboardingStatus.complete && onContinueOnboarding ? (
+        <section className="gallery-panel" aria-label="Next Aura mission">
+          <p className="product-entry__genre">Next mission</p>
+          <h2>{!onboardingStatus.fighter ? 'Create your own Rookie' : !onboardingStatus.debutComplete ? 'Make your Aura debut' : onboardingStatus.recommendedStep === 'invite' ? 'Bring in Player Two' : onboardingStatus.recommendedStep === 'stage' ? 'Choose your Crew’s home stage' : 'Build your Crew'}</h2>
+          <p>Pick up where you left off. Your progress is saved.</p>
+          <Button onClick={onContinueOnboarding}>Continue My First Run</Button>
+        </section>
+      ) : null}
 
       <section className="product-entry__hero product-entry__hero--gameplay-first" aria-labelledby="play-aura-title">
         <header className="product-entry__hero-copy">

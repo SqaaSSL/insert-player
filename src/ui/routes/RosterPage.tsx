@@ -33,8 +33,9 @@ import {
   syncCrewFightersToLocal,
   syncCloudFightersToLocal,
   type CloudFighter,
+  type CloudImportProgress,
 } from '../../services/CloudFighters.ts';
-import { captureApiRequestContext } from '../../services/ApiClient.ts';
+import { assertApiRequestContextCurrent, captureApiRequestContext, withApiRequestTimeout } from '../../services/ApiClient.ts';
 import { isStageVisibleToActiveCrew, syncCrewStageToLocal } from '../../services/CrewStages.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { ensurePlayableSpritesUpToDate } from '../../services/CharacterPipeline.ts';
@@ -124,6 +125,58 @@ export interface RosterFighterEntry {
   arcadeSlug: string | null;
   meta: CachedMeta | null;
   cloud: CloudFighter | null;
+}
+
+export async function prepareRosterFighters(
+  fighters: RosterFighterEntry[],
+  gameMode: FighterGameMode,
+  options: {
+    signal: AbortSignal;
+    onProgress: (fighter: RosterFighterEntry, progress: CloudImportProgress) => void;
+  },
+): Promise<number> {
+  const ownerScope = getActiveSpriteCacheScope();
+  const context = captureApiRequestContext();
+  const selected = Array.from(new Map(fighters.map((fighter) => [fighter.photoHash, fighter])).values());
+  // Two selected fighters share a bounded preparation window. Each importer
+  // limits sprite concurrency, while both players can load at the same time.
+  return withApiRequestTimeout(async (signal) => {
+    const assertCurrent = () => {
+      signal.throwIfAborted();
+      assertApiRequestContextCurrent(context);
+    };
+    const upgraded = await Promise.all(selected.map(async (fighter) => {
+      assertCurrent();
+      let count = 0;
+      options.onProgress(fighter, { phase: 'checking', completed: 0, total: 0 });
+      if (fighter.kind === 'arcade' && fighter.cloud) {
+        await downloadArcadeFighterToLocal(fighter.cloud, context, {
+          gameMode,
+          includeSourceAssets: false,
+          // Retain capable-device HQ for moves that actually render. Rush
+          // already uses the lightweight combat atlas for its larger cast.
+          ...(gameMode === 'rush' ? { includeHighResolutionAssets: false } : {}),
+          signal,
+          onProgress: (progress) => {
+            if (!signal.aborted) options.onProgress(fighter, progress);
+          },
+        });
+      } else if (fighter.kind === 'local') {
+        count = await ensurePlayableSpritesUpToDate(fighter.photoHash);
+      }
+      assertCurrent();
+      const [playableSprites, cachedMeta] = await Promise.all([
+        getAllSpritesForHash(fighter.photoHash, ownerScope),
+        getCachedMeta(fighter.photoHash, ownerScope),
+      ]);
+      assertCurrent();
+      assertFighterReadyForMode(playableSprites, fighter.name, gameMode, cachedMeta);
+      options.onProgress(fighter, { phase: 'ready', completed: 0, total: 0 });
+      return count;
+    }));
+    assertCurrent();
+    return upgraded.reduce((sum, count) => sum + count, 0);
+  }, { signal: options.signal, timeoutMs: 75_000 });
 }
 
 function getModeMeta(mode: RosterMode) {
@@ -500,6 +553,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const [fightDifficulty, setFightDifficulty] = useState<FightDifficultyId>('champion');
   const [auraDifficulty, setAuraDifficulty] = useState<AuraDifficultyId>('viral');
   const [preparingFight, setPreparingFight] = useState(false);
+  const [preparationMessage, setPreparationMessage] = useState('');
+  const [preparationFailed, setPreparationFailed] = useState(false);
   const [hasCoarsePointer, setHasCoarsePointer] = useState(
     () => window.matchMedia?.('(pointer: coarse)').matches ?? false,
   );
@@ -507,12 +562,16 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const p2PersonalityExplicitRef = useRef(false);
   const p1SelectionExplicitRef = useRef(false);
   const preparationGuardRef = useRef(createAsyncEpochGuard());
+  const preparationAbortRef = useRef<AbortController | null>(null);
   const autoStartConsumedRef = useRef(false);
 
   useEffect(() => {
     const guard = preparationGuardRef.current;
     guard.mount();
-    return () => guard.unmount();
+    return () => {
+      guard.unmount();
+      preparationAbortRef.current?.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -530,7 +589,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   useEffect(() => {
     preparationGuardRef.current.cancel();
+    preparationAbortRef.current?.abort();
     setPreparingFight(false);
+    setPreparationFailed(false);
     setStageChoice({ kind: 'auto' });
     p1PersonalityExplicitRef.current = false;
     p2PersonalityExplicitRef.current = false;
@@ -830,7 +891,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const cancelFightPreparation = (message = 'Preparation cancelled. Review the matchup and start again.') => {
     if (!preparingFight) return;
     preparationGuardRef.current.cancel();
+    preparationAbortRef.current?.abort();
     setPreparingFight(false);
+    setPreparationFailed(false);
     setStatus(message);
   };
 
@@ -874,14 +937,16 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
 
   const goBack = () => {
     preparationGuardRef.current.cancel();
+    preparationAbortRef.current?.abort();
     setPreparingFight(false);
     onBack();
   };
 
   const launchFight = async () => {
     if (!p1Fighter || !p2Fighter || preparingFight || touchVersusBlocked) return;
-    const ownerScope = getActiveSpriteCacheScope();
     const preparationEpoch = preparationGuardRef.current.begin();
+    const controller = new AbortController();
+    preparationAbortRef.current = controller;
     const selectedP1 = p1Fighter;
     const selectedP2 = p2Fighter;
     const selectedP1Personality = p1PersonalityId;
@@ -890,6 +955,8 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     const selectedStageChoice = stageChoice;
     const selectedStage = selectedPhotoStage;
     setPreparingFight(true);
+    setPreparationFailed(false);
+    setPreparationMessage('Checking saved moves...');
     const officialNames = [selectedP1, selectedP2]
       .filter((fighter) => fighter.kind === 'arcade')
       .map((fighter) => fighter.name);
@@ -899,27 +966,21 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
         : 'Preparing fighter sprites...',
     );
     try {
-      const selected = Array.from(new Map(
-        [selectedP1, selectedP2].map((fighter) => [fighter.key, fighter]),
-      ).values());
-      let upgraded = 0;
-      for (const fighter of selected) {
-        if (fighter.kind === 'arcade' && fighter.cloud) {
-          await downloadArcadeFighterToLocal(
-            fighter.cloud,
-            captureApiRequestContext(),
-            mode === 'rush' ? { includeHighResolutionAssets: false } : {},
-          );
-        } else if (fighter.kind === 'local') {
-          upgraded += await ensurePlayableSpritesUpToDate(fighter.photoHash);
-        }
-        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
-        const playableSprites = await getAllSpritesForHash(fighter.photoHash, ownerScope);
-        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
-        const cachedMeta = await getCachedMeta(fighter.photoHash, ownerScope);
-        if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
-        assertFighterReadyForMode(playableSprites, fighter.name, rosterGameMode, cachedMeta);
-      }
+      const progressByFighter = new Map<string, string>();
+      const upgraded = await prepareRosterFighters([selectedP1, selectedP2], rosterGameMode, {
+        signal: controller.signal,
+        onProgress: (fighter, progress) => {
+          if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
+          progressByFighter.set(fighter.photoHash, progress.phase === 'ready'
+            ? `${fighter.name} ready`
+            : progress.phase === 'downloading' && progress.total > 0
+              ? `${fighter.name}: ${progress.completed}/${progress.total} moves`
+              : `Checking ${fighter.name}...`);
+          const message = Array.from(progressByFighter.values()).join(' · ');
+          setPreparationMessage(message);
+          setStatus(message);
+        },
+      });
       if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
       if (upgraded > 0) {
         setStatus(`Updated ${upgraded} cached animations`);
@@ -951,8 +1012,10 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       });
     } catch (err: any) {
       if (!preparationGuardRef.current.isCurrent(preparationEpoch)) return;
+      controller.abort();
       debugWarn('[Roster] Sprite preparation failed:', err?.message ?? err);
-      setStatus(err?.message ? `Could not prepare fighters: ${err.message}` : 'Could not prepare fighters');
+      setPreparationFailed(true);
+      setStatus(err?.message ? `Could not load this match: ${err.message}` : 'Could not load this match. Check your connection and retry.');
     } finally {
       if (preparationGuardRef.current.isCurrent(preparationEpoch)) {
         setPreparingFight(false);
@@ -1045,10 +1108,10 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
               </div>
               {rosterLoaded && rosterEntries.length > 0 ? (
                 <button type="button" className="home-menu__action is-primary roster-fight-btn" aria-describedby="roster-active-settings" disabled={!canStartFight || preparingFight} onClick={() => void launchFight()}>
-                  <span>{preparingFight ? 'Preparing...' : modeMeta.actionLabel}</span>
+                  <span>{preparingFight ? 'Preparing...' : preparationFailed ? 'Retry match' : modeMeta.actionLabel}</span>
                   <small>
                     {preparingFight
-                      ? 'Checking cached sprites'
+                      ? preparationMessage
                       : touchVersusBlocked
                       ? 'Touch Versus needs a keyboard or controllers'
                       : canStartFight
@@ -1057,6 +1120,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
                   </small>
                 </button>
               ) : null}
+              {preparingFight ? <Button onClick={() => cancelFightPreparation()}>Cancel loading</Button> : null}
             </div>
 
             {preferredUnavailable && <p className="roster-touch-notice" role="status">

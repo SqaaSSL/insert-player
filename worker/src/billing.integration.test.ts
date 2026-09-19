@@ -1,5 +1,15 @@
 import { Miniflare } from 'miniflare';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+const { getOrganizationMembershipList, getClerkUser } = vi.hoisted(() => ({
+  getOrganizationMembershipList: vi.fn(),
+  getClerkUser: vi.fn(),
+}));
+vi.mock('@clerk/backend', () => ({
+  createClerkClient: () => ({
+    organizations: { getOrganizationMembershipList },
+    users: { getUser: getClerkUser },
+  }),
+}));
 import {
   authorizeGenerationPurchase,
   authorizeStageForgePurchase,
@@ -9,6 +19,7 @@ import {
   settleGenerationPurchase,
 } from './billing';
 import { CURRENT_LEGAL_VERSION } from './legal';
+import { getCrewStageStatus } from './crewStages';
 import type { AuthContext, Env, PublicAuthContext } from './types';
 import { TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 import { atlasAnimationPlan } from './templateGenerationPolicy';
@@ -90,6 +101,14 @@ const SCHEMA = `
     reservation_expires_at TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE crew_referrals (
+    id TEXT PRIMARY KEY,
+    clerk_organization_id TEXT NOT NULL,
+    inviter_user_id TEXT NOT NULL,
+    invitee_user_id TEXT,
+    status TEXT NOT NULL
   );
 
   CREATE TABLE provider_sessions (
@@ -329,9 +348,27 @@ async function createBindings(): Promise<{ mf: Miniflare; db: D1Database; env: E
     ENVIRONMENT: 'production',
     STRIPE_WEBHOOK_SECRET: webhookSecret,
     STRIPE_ACCOUNT_ID: stripeAccountId,
+    CLERK_SECRET_KEY: 'sk_test_stage',
   } as unknown as Env;
   return { mf, db, env };
 }
+
+async function acceptedStageFriend(db: D1Database, userId: string, organizationId: string): Promise<void> {
+  await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO users (id, clerk_user_id, display_name)
+      VALUES ('stage-friend', 'clerk_stage_friend', 'Player Two')`),
+    db.prepare(`INSERT INTO crew_referrals (id, clerk_organization_id, inviter_user_id, invitee_user_id, status)
+      VALUES (?, ?, ?, 'stage-friend', 'accepted')`).bind(`referral-${organizationId}`, organizationId, userId),
+  ]);
+}
+
+beforeEach(() => {
+  vi.resetAllMocks();
+  getOrganizationMembershipList.mockResolvedValue({ data: [{ id: 'membership_friend' }] });
+  getClerkUser.mockResolvedValue({ externalAccounts: [{
+    provider: 'oauth_google', providerUserId: 'google_friend', verification: { status: 'verified' },
+  }] });
+});
 
 async function insertPaidCheckout(
   db: D1Database,
@@ -489,9 +526,13 @@ describe('Stage Forge credit reservations against D1', () => {
         VALUES (?, ?, 'Crew Stage Admin', 3)
       `).bind(userId, userId).run();
 
+      await acceptedStageFriend(db, userId, 'org_stage_crew');
       const first = await authorizeStageForgePurchase(request(), env, auth);
       expect(first.status).toBe(200);
       const receipt = await first.json() as { purchaseId: string; providerSessionId: string };
+      expect(await (await getCrewStageStatus(
+        new Request('https://api.insertplayer.ai/api/crew/stage'), env, auth as AuthContext,
+      )).json()).toMatchObject({ claimState: 'reserved', canCreate: false, canResumeCreate: true });
       expect(receipt).toMatchObject({
         authorized: true,
         mode: 'crew_included',
@@ -540,6 +581,7 @@ describe('Stage Forge credit reservations against D1', () => {
         INSERT INTO users (id, clerk_user_id, display_name, credits_balance)
         VALUES (?, ?, 'Crew Stage Failure', 0)
       `).bind(userId, userId).run();
+      await acceptedStageFriend(db, userId, 'org_stage_failure');
       const response = await authorizeStageForgePurchase(new Request(
         'https://api.insertplayer.ai/api/billing/stage-forge', {
           method: 'POST',
@@ -589,6 +631,71 @@ describe('Stage Forge credit reservations against D1', () => {
     } finally {
       await mf.dispose();
     }
+  });
+
+  it('requires authentication, a Crew admin and a verified accepted member before minting an included forge', async () => {
+    const { mf, db, env } = await createBindings();
+    const userId = 'user-stage-gated';
+    const auth = {
+      userId, rateLimitKey: `user:${userId}`, claims: {},
+      activeOrganizationId: 'org_stage_gate', activeOrganizationRole: 'org:admin',
+      user: { id: userId, credits_balance: 0 },
+    } as unknown as PublicAuthContext;
+    const request = () => new Request('https://api.insertplayer.ai/api/billing/stage-forge', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal: generationLegal, crewIncluded: true }),
+    });
+    try {
+      await db.prepare(`INSERT INTO users (id, clerk_user_id, display_name)
+        VALUES (?, ?, 'Stage Admin')`).bind(userId, userId).run();
+      expect((await authorizeStageForgePurchase(request(), env, { ...auth, user: null })).status).toBe(401);
+      expect((await authorizeStageForgePurchase(request(), env, { ...auth, activeOrganizationId: null })).status).toBe(409);
+      expect((await authorizeStageForgePurchase(request(), env, { ...auth, activeOrganizationRole: 'org:member' })).status).toBe(403);
+      const noFriend = await authorizeStageForgePurchase(request(), env, auth);
+      expect(noFriend.status).toBe(409);
+      expect(await noFriend.json()).toMatchObject({ code: 'crew_stage_friend_required' });
+      await acceptedStageFriend(db, userId, 'org_stage_gate');
+      getOrganizationMembershipList.mockResolvedValue({ data: [] });
+      expect((await authorizeStageForgePurchase(request(), env, auth)).status).toBe(409);
+      getOrganizationMembershipList.mockRejectedValue(new Error('Clerk unavailable'));
+      expect((await authorizeStageForgePurchase(request(), env, auth)).status).toBe(503);
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_stages').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 0 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 0 });
+    } finally { await mf.dispose(); }
+  });
+
+  it('allows one claim under competing eligible admins and recovers the original session without a new gift', async () => {
+    const { mf, db, env } = await createBindings();
+    const auth = (id: string) => ({
+      userId: id, rateLimitKey: `user:${id}`, claims: {},
+      activeOrganizationId: 'org_stage_race', activeOrganizationRole: 'org:admin',
+      user: { id, credits_balance: 0 },
+    } as unknown as PublicAuthContext);
+    const request = () => new Request('https://api.insertplayer.ai/api/billing/stage-forge', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ legal: generationLegal, crewIncluded: true }),
+    });
+    try {
+      await db.batch(['stage_admin_one', 'stage_admin_two'].map((id) => db.prepare(`
+        INSERT INTO users (id, clerk_user_id, display_name) VALUES (?, ?, 'Stage Admin')`).bind(id, id)));
+      await acceptedStageFriend(db, 'stage_admin_one', 'org_stage_race');
+      const contenders = [auth('stage_admin_one'), auth('stage_admin_two')];
+      const responses = await Promise.all(contenders.map((candidate) => authorizeStageForgePurchase(request(), env, candidate)));
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+      const winner = responses.findIndex((response) => response.status === 200);
+      const receipt = await responses[winner].json() as { purchaseId: string; providerSessionId: string };
+      expect(await (await getCrewStageStatus(
+        new Request('https://api.insertplayer.ai/api/crew/stage'), env, contenders[1 - winner] as AuthContext,
+      )).json()).toMatchObject({ canCreate: false, canResumeCreate: false });
+      getOrganizationMembershipList.mockRejectedValue(new Error('Clerk temporarily unavailable'));
+      const resumed = await authorizeStageForgePurchase(request(), env, contenders[winner]);
+      expect(resumed.status).toBe(200);
+      expect(await resumed.json()).toMatchObject({ purchaseId: receipt.purchaseId, providerSessionId: receipt.providerSessionId });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM crew_stages').first()).toEqual({ count: 1 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM generation_charges').first()).toEqual({ count: 1 });
+      expect(await db.prepare('SELECT COUNT(*) AS count FROM provider_sessions').first()).toEqual({ count: 1 });
+    } finally { await mf.dispose(); }
   });
 
   it('reserves one credit with a metered stage provider session and releases it before dispatch', async () => {

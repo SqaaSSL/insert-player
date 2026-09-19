@@ -462,12 +462,46 @@ describe('GamePage Aura presentation handoff', () => {
     expect(find(node => node.type === AuraOnboardingHint)).toBeUndefined();
   });
   it('shows only the Aura result after a trial, with its Rookie creation action', async () => {
+    vi.stubGlobal('localStorage', (viewport as any).localStorage);
     await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'trial' });
     emit('loading'); emit('ready'); finishOpening();
     viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
     viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
     expect(find(node => node.props?.['aria-label'] === 'Free round complete')).toBeUndefined();
     expect(find(node => node.type === AuraBattleResults)?.props).toMatchObject({ trial: true, onCreatePlayer: props.onCreateFighter });
+    expect(localStorage.setItem).toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
+  });
+
+  it('shows debut saving, offers retry on failure and keeps the Crew mission available', async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(undefined);
+    props.onAuraDebutComplete = save;
+    props.onContinueOnboarding = vi.fn();
+    props.authSessionKey = 'account-a';
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'onboarding', p1CloudFighterId: 'rookie-id' });
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    const result = () => find(node => node.type === AuraBattleResults).props;
+    expect(result()).toMatchObject({ debutSaveState: 'saving', onBuildCrew: props.onContinueOnboarding });
+    await Promise.resolve(); flush();
+    expect(result().debutSaveState).toBe('error');
+    result().onRetryDebut(); flush();
+    expect(result().debutSaveState).toBe('saving');
+    await Promise.resolve(); flush();
+    expect(result().debutSaveState).toBe('saved');
+    expect(save.mock.calls).toEqual([['rookie-id'], ['rookie-id']]);
+  });
+
+  it('ignores a late debut save after the account changes', async () => {
+    let saved!: () => void;
+    props.onAuraDebutComplete = vi.fn(() => new Promise<void>((resolve) => { saved = resolve; }));
+    props.onContinueOnboarding = vi.fn();
+    props.authSessionKey = 'account-a';
+    await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'onboarding', p1CloudFighterId: 'rookie-id' });
+    viewport.dispatchEvent(new CustomEvent(AURA_BATTLE_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } })); flush();
+    props.authSessionKey = 'account-b'; flush();
+    saved(); await Promise.resolve(); flush();
+    expect(find(node => node.type === AuraBattleResults).props.debutSaveState).toBe('idle');
   });
   it('rejects old final frames and late save/share responses after a rematch', async () => {
     await mount('AuraScene', { gameMode: 'aura', vsAI: true });

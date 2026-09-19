@@ -6,7 +6,7 @@ vi.mock('./ApiClient', async (importOriginal) => {
   return { ...actual, apiFetch: vi.fn() };
 });
 
-import { apiFetch, type ApiRequestContext } from './ApiClient.ts';
+import { ApiRequestTimeoutError, apiFetch, captureApiRequestContext, configureApiAuth, type ApiRequestContext } from './ApiClient.ts';
 import {
   CloudFighterRequestError,
   arcadeFighterPhotoHash,
@@ -31,6 +31,7 @@ import {
   setCloudFighterPublic,
   shouldRefreshLocalFighter,
   syncFighterToCloud,
+  type CloudFighter,
   type CloudSprite,
   type FingerprintedSprite,
 } from './CloudFighters.ts';
@@ -361,6 +362,7 @@ describe('official Arcade HQ sprite hydration', () => {
   });
 
   afterEach(async () => {
+    vi.useRealTimers();
     await resetSyncCache();
   });
 
@@ -569,6 +571,136 @@ describe('official Arcade HQ sprite hydration', () => {
     const cached = await getAllSpritesForHash(arcadeFighterPhotoHash(fighter));
     expect(cached).toHaveLength(11);
     expect(cached.every((sprite) => !sprite.rawPngBlob)).toBe(true);
+  });
+
+  async function officialFighter(): Promise<CloudFighter> {
+    const blob = new Blob(['runtime'], { type: 'image/png' });
+    const contentHash = await hashPhoto(blob);
+    return {
+      id: 'official-trump', name: 'Donald Trump', qualityTier: 'champion', public: true,
+      sources: { side: 'https://api.insertplayer.test/source.png' },
+      sprites: PLAYABLE_ANIMATION_NAMES.map((animationName) => ({
+        ...cloudSprite(contentHash), id: `official-${animationName}`, animationName,
+        url: `https://api.insertplayer.test/runtime/${animationName}.png`,
+        hqUrl: `https://api.insertplayer.test/hq/${animationName}.png`,
+        hqFrameWidth: 768, hqFrameHeight: 1024, hqFrameCount: 8,
+        rawUrl: 'https://api.insertplayer.test/private-raw.png', rawContentHash: null,
+      })),
+      arcade: {
+        slug: 'donald-trump', rank: 1, challengerLine: 'Ready', defaultPersonality: 'balanced',
+        reference: { kind: 'generated', sourceUrl: null, license: 'Internal', credit: 'Insert Player' },
+      },
+    };
+  }
+
+  it('loads only Aura registration and finale moves for an official bundled performer, retaining HQ', async () => {
+    const fighter = await officialFighter();
+    const progress = vi.fn();
+    vi.mocked(apiFetch).mockImplementation(async (input) => new Response(
+      new Blob([String(input).includes('/hq/') ? 'hq-master' : 'runtime'], { type: 'image/png' }),
+    ));
+    await expect(downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      gameMode: 'aura', includeSourceAssets: false, includeHighResolutionAssets: true, onProgress: progress,
+    })).resolves.toMatchObject({ spritesImported: 3, spritesSkipped: 0 });
+
+    const requests = vi.mocked(apiFetch).mock.calls.map(([input]) => String(input));
+    expect(requests).toHaveLength(6);
+    expect(requests.every((url) => /\/(idle|victory|ko)\.png$/.test(url))).toBe(true);
+    const meta = await getCachedMeta(arcadeFighterPhotoHash(fighter));
+    expect(meta).toMatchObject({ status: 'ready', cloudPublic: true, cloudFighterId: fighter.id });
+    expect(meta?.animationsReady.sort()).toEqual(['idle', 'ko', 'victory']);
+    expect(Object.keys(meta?.cloudPlayableSpriteRefs ?? {})).toHaveLength(PLAYABLE_ANIMATION_NAMES.length);
+    expect(progress).toHaveBeenCalledWith({ phase: 'downloading', completed: 1, total: 3 });
+    expect(progress).toHaveBeenLastCalledWith({ phase: 'ready', completed: 3, total: 3 });
+    expect((await getAllSpritesForHash(arcadeFighterPhotoHash(fighter))).every((sprite) => sprite.rawPngBlob)).toBe(true);
+  });
+
+  it('preserves an already cached combat pack when preparing only Aura moves', async () => {
+    const fighter = await officialFighter();
+    vi.mocked(apiFetch).mockImplementation(async () => new Response(new Blob(['runtime'], { type: 'image/png' })));
+    await downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      gameMode: 'fight', includeSourceAssets: false, includeHighResolutionAssets: false,
+    });
+    vi.mocked(apiFetch).mockClear();
+    await downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      gameMode: 'aura', includeSourceAssets: false, includeHighResolutionAssets: false,
+    });
+    expect(apiFetch).not.toHaveBeenCalled();
+    expect(await getAllSpritesForHash(arcadeFighterPhotoHash(fighter))).toHaveLength(PLAYABLE_ANIMATION_NAMES.length);
+  });
+
+  it('settles a cancelled body read without writing late assets or ready metadata', async () => {
+    const fighter = await officialFighter();
+    const controller = new AbortController();
+    let releaseBody!: (blob: Blob) => void;
+    let signal!: AbortSignal;
+    let bodyStarted!: () => void;
+    const started = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    vi.mocked(apiFetch).mockImplementation(async (_url, init) => {
+      signal = init?.signal as AbortSignal;
+      const response = new Response();
+      vi.spyOn(response, 'blob').mockImplementation(() => {
+        bodyStarted();
+        return new Promise((resolve) => { releaseBody = resolve; });
+      });
+      return response;
+    });
+    const download = downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      gameMode: 'aura', includeSourceAssets: false, includeHighResolutionAssets: false, signal: controller.signal,
+    });
+    const rejected = expect(download).rejects.toMatchObject({ name: 'AbortError' });
+    await started;
+    controller.abort();
+    await rejected;
+    expect(signal.aborted).toBe(true);
+    releaseBody(new Blob(['runtime']));
+    await Promise.resolve();
+    expect(await getCachedMeta(arcadeFighterPhotoHash(fighter))).toBeNull();
+    expect(await getAllSpritesForHash(arcadeFighterPhotoHash(fighter))).toEqual([]);
+  });
+
+  it('times out stalled sprite bodies instead of leaving preparation pending', async () => {
+    const fighter = await officialFighter();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let bodyStarted!: () => void;
+    const started = new Promise<void>((resolve) => { bodyStarted = resolve; });
+    vi.mocked(apiFetch).mockImplementation(async () => {
+      const response = new Response();
+      vi.spyOn(response, 'blob').mockImplementation(() => {
+        bodyStarted();
+        return new Promise(() => {});
+      });
+      return response;
+    });
+    const download = downloadArcadeFighterToLocal(fighter, SYNC_CONTEXT, {
+      gameMode: 'aura', includeSourceAssets: false, includeHighResolutionAssets: false, assetTimeoutMs: 100,
+    });
+    const rejected = expect(download).rejects.toBeInstanceOf(ApiRequestTimeoutError);
+    await started;
+    await vi.advanceTimersByTimeAsync(100);
+    await rejected;
+    expect(await getCachedMeta(arcadeFighterPhotoHash(fighter))).toBeNull();
+  });
+
+  it('rejects a response body after the auth session changes', async () => {
+    const fighter = await officialFighter();
+    const context = captureApiRequestContext();
+    vi.mocked(apiFetch).mockImplementation(async () => {
+      const response = new Response();
+      vi.spyOn(response, 'blob').mockImplementation(async () => {
+        configureApiAuth(async () => 'other-session');
+        return new Blob(['runtime']);
+      });
+      return response;
+    });
+    try {
+      await expect(downloadArcadeFighterToLocal(fighter, context, {
+        gameMode: 'aura', includeSourceAssets: false, includeHighResolutionAssets: false,
+      })).rejects.toMatchObject({ name: 'ApiSessionChangedError' });
+      expect(await getCachedMeta(arcadeFighterPhotoHash(fighter))).toBeNull();
+    } finally {
+      configureApiAuth(null);
+    }
   });
 });
 

@@ -10,6 +10,7 @@ import { readJsonBody } from './requestBody';
 import type { AuthContext, Env } from './types';
 import { canManageCrew } from './crewAuthorization';
 import { deleteCrewStageForOrganization } from './crewStages';
+import { getCrewStageEligibility } from './crewStageEligibility';
 
 const MAX_INVITES_PER_DAY = 5;
 const MAX_REWARDS_PER_INVITER = 3;
@@ -277,11 +278,11 @@ export async function createCrewInvitation(
 export async function getReferralLanding(env: Env, referralId: string): Promise<Response> {
   if (!/^[a-f0-9]{32}$/.test(referralId)) return json({ error: 'Invitation not found' }, 404);
   const referral = await env.DB.prepare(`
-    SELECT id, clerk_organization_id, crew_name, inviter_display_name, status, expires_at
+    SELECT id, clerk_organization_id, crew_name, inviter_display_name, status, expires_at, invite_channel
     FROM crew_referrals WHERE id = ? LIMIT 1
   `).bind(referralId).first<Pick<
     ReferralRow,
-    'id' | 'clerk_organization_id' | 'crew_name' | 'inviter_display_name' | 'status' | 'expires_at'
+    'id' | 'clerk_organization_id' | 'crew_name' | 'inviter_display_name' | 'status' | 'expires_at' | 'invite_channel'
   >>();
   if (!referral || ['revoked', 'rejected', 'expired'].includes(referral.status)) {
     return json({ error: 'Invitation not found' }, 404);
@@ -298,6 +299,7 @@ export async function getReferralLanding(env: Env, referralId: string): Promise<
       crewName: referral.crew_name,
       inviterName: referral.inviter_display_name,
       status: referral.status,
+      inviteChannel: referral.invite_channel,
     },
   });
 }
@@ -405,6 +407,12 @@ export async function acceptCrewInviteLink(
     }
   }
 
+  await env.DB.prepare(`
+    UPDATE crew_referrals SET membership_confirmed_at = COALESCE(membership_confirmed_at, datetime('now'))
+    WHERE id = ? AND invitee_user_id = ?
+      AND status IN ('accepted', 'qualified', 'rewarded', 'capped')
+  `).bind(referral.id, auth.userId).run();
+
   return json({
     invitation: {
       id: referral.id,
@@ -428,6 +436,9 @@ export async function referralRookiePasses(env: Env, userId: string): Promise<nu
 }
 
 export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<Response> {
+  const progress = await env.DB.prepare(`
+    SELECT trial_completed_at, debut_completed_at FROM user_onboarding_progress WHERE user_id = ?
+  `).bind(auth.userId).first<{ trial_completed_at: string | null; debut_completed_at: string | null }>();
   const fighter = await env.DB.prepare(`
     SELECT f.id, f.photo_hash, f.name, f.public_flag
     FROM fighters f
@@ -444,12 +455,11 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
       AND clerk_organization_id = ?
       AND status NOT IN ('rejected', 'revoked', 'expired')
   `).bind(auth.userId, organizationId ?? '').first<{ count: number }>();
-  const acceptedInvites = await env.DB.prepare(`
-    SELECT COUNT(*) AS count FROM crew_referrals
-    WHERE inviter_user_id = ?
-      AND clerk_organization_id = ?
-      AND status IN ('accepted', 'qualified', 'rewarded', 'capped')
-  `).bind(auth.userId, organizationId ?? '').first<{ count: number }>();
+  // Historical acceptance/qualification does not prove that a friend is still
+  // in the Crew. Live verification also keeps pre-migration invitations usable.
+  const crewEligibility = organizationId
+    ? await getCrewStageEligibility(env, organizationId)
+    : null;
   const pendingInvite = organizationId ? await env.DB.prepare(`
     SELECT id, expires_at FROM crew_referrals
     WHERE inviter_user_id = ?
@@ -468,7 +478,7 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
   const hasCrew = Boolean(organizationId);
   const canInviteCrew = hasCrew && canManageCrew(auth);
   const invitesSent = invites?.count ?? 0;
-  const invitesAccepted = acceptedInvites?.count ?? 0;
+  const invitesAccepted = crewEligibility?.acceptedMemberCount ?? 0;
   const crewStage = organizationId ? await env.DB.prepare(`
     SELECT id, label, kind, status, created_at
     FROM crew_stages
@@ -482,7 +492,10 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
     created_at: string;
   }>() : null;
   const crewStageReady = crewStage?.status === 'ready';
+  const debutComplete = Boolean(progress?.debut_completed_at);
   return json({
+    trialComplete: Boolean(progress?.trial_completed_at || progress?.debut_completed_at),
+    debutComplete,
     fighter: fighter ? { id: fighter.id, photoHash: fighter.photo_hash, name: fighter.name } : null,
     activeCrew: hasCrew ? {
       id: auth.activeOrganizationId,
@@ -491,6 +504,7 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
     } : null,
     invitesSent,
     invitesAccepted,
+    crewMembershipVerificationUnavailable: crewEligibility?.unavailable ?? false,
     pendingInvite: pendingInvite ? {
       id: pendingInvite.id,
       expiresAt: pendingInvite.expires_at,
@@ -507,20 +521,30 @@ export async function getOnboardingStatus(env: Env, auth: AuthContext): Promise<
     crewStageState: crewStage?.status ?? (hasCrew ? 'available' : 'unavailable'),
     crewStageReady,
     referralRookiePasses: passes,
-    recommendedStep: !fighter || !hasCrew || !sharedWithActiveCrew
-      ? (!fighter ? 'create' : 'crew')
-      : canInviteCrew && invitesAccepted < 1
+    recommendedStep: !fighter ? 'create'
+      : !debutComplete ? 'debut'
+      : !hasCrew || !sharedWithActiveCrew ? 'crew'
+      : canInviteCrew && !crewStageReady && invitesAccepted < 1
         ? 'invite'
         : canInviteCrew && !crewStageReady
           ? 'stage'
         : 'complete',
     complete: Boolean(
       fighter
+      && debutComplete
       && hasCrew
       && sharedWithActiveCrew
-      && (!canInviteCrew || (crewStageReady && invitesAccepted > 0)),
+      && (!canInviteCrew || crewStageReady),
     ),
   });
+}
+
+export async function recordOnboardingTrial(_request: Request, env: Env, auth: AuthContext): Promise<Response> {
+  await env.DB.prepare(`
+    INSERT INTO user_onboarding_progress (user_id, trial_completed_at) VALUES (?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET trial_completed_at = COALESCE(trial_completed_at, excluded.trial_completed_at)
+  `).bind(auth.userId).run();
+  return json({ recorded: true });
 }
 
 export async function recordOnboardingDebut(
@@ -536,10 +560,20 @@ export async function recordOnboardingDebut(
   const fighter = await env.DB.prepare(`
     SELECT f.id FROM fighters f
     WHERE f.id = ? AND f.owner_user_id = ? AND f.quality_tier = 'rookie'
+      AND NOT EXISTS (SELECT 1 FROM arcade_fighters af WHERE af.fighter_id = f.id)
       AND ${completeRookieAuraPackSql('f')}
     LIMIT 1
   `).bind(fighterId, auth.userId).first<{ id: string }>();
   if (!fighter) return json({ error: 'The debut fighter is not an available Rookie' }, 403);
+
+  await env.DB.prepare(`
+    INSERT INTO user_onboarding_progress (user_id, trial_completed_at, debut_fighter_id, debut_completed_at)
+    VALUES (?, datetime('now'), ?, datetime('now'))
+    ON CONFLICT(user_id) DO UPDATE SET
+      trial_completed_at = COALESCE(trial_completed_at, excluded.trial_completed_at),
+      debut_fighter_id = COALESCE(debut_fighter_id, excluded.debut_fighter_id),
+      debut_completed_at = COALESCE(debut_completed_at, excluded.debut_completed_at)
+  `).bind(auth.userId, fighterId).run();
 
   const referral = await env.DB.prepare(`
     SELECT * FROM crew_referrals
@@ -559,7 +593,8 @@ export async function recordOnboardingDebut(
 
   const clerkUserId = auth.user.clerk_user_id;
   if (!clerkUserId) return json({ error: 'A verified social account is required' }, 403);
-  const clerkUser = await clerk(env).users.getUser(clerkUserId);
+  const clerkClient = clerk(env);
+  const clerkUser = await clerkClient.users.getUser(clerkUserId);
   const stableAccount = verifiedOAuthAccount(clerkUser);
   if (!stableAccount) {
     return json({
@@ -581,12 +616,21 @@ export async function recordOnboardingDebut(
     LIMIT 1
   `).bind(oauthIdentityHmac, referral.id).first<{ id: string }>();
   if (usedIdentity) return json({ error: 'This social account has already qualified a referral' }, 409);
+  const membership = await clerkClient.organizations.getOrganizationMembershipList({
+    organizationId: referral.clerk_organization_id,
+    userId: [clerkUserId],
+    limit: 1,
+  });
+  if (membership.data.length === 0) {
+    return json({ recorded: true, referralQualified: false, reason: 'crew_not_active' });
+  }
 
   const entitlementId = generateId();
   await env.DB.batch([
     env.DB.prepare(`
       UPDATE crew_referrals
       SET status = 'qualified', oauth_identity_hmac = COALESCE(oauth_identity_hmac, ?),
+          membership_confirmed_at = COALESCE(membership_confirmed_at, datetime('now')),
           qualified_at = datetime('now'), updated_at = datetime('now')
       WHERE id = ? AND invitee_user_id = ? AND status = 'accepted'
     `).bind(oauthIdentityHmac, referral.id, auth.userId),
@@ -643,7 +687,8 @@ export async function acceptReferralWebhook(
   if (!referral || referral.clerk_invitation_id !== event.data.id
     || referral.clerk_organization_id !== event.data.organization_id) return false;
 
-  const clerkUser = await clerk(env).users.getUser(event.data.user_id);
+  const clerkClient = clerk(env);
+  const clerkUser = await clerkClient.users.getUser(event.data.user_id);
   const primaryEmail = clerkUser.emailAddresses.find((address) => address.id === clerkUser.primaryEmailAddressId)
     ?? clerkUser.emailAddresses[0];
   const user = await upsertClerkUserProfile(env, clerkUser.id, {
@@ -651,12 +696,22 @@ export async function acceptReferralWebhook(
     avatarUrl: clerkUser.imageUrl,
     email: primaryEmail?.emailAddress,
   }, { preserveMissingFields: true });
+  const membership = verifiedOAuthAccount(clerkUser)
+    ? await clerkClient.organizations.getOrganizationMembershipList({
+      organizationId: referral.clerk_organization_id,
+      userId: [clerkUser.id],
+      limit: 1,
+    })
+    : null;
   await env.DB.prepare(`
     UPDATE crew_referrals
-    SET invitee_user_id = ?, status = 'accepted', accepted_at = COALESCE(accepted_at, datetime('now')),
+    SET invitee_user_id = ?, status = CASE WHEN status = 'pending' THEN 'accepted' ELSE status END,
+        accepted_at = COALESCE(accepted_at, datetime('now')),
+        membership_confirmed_at = CASE WHEN ? THEN COALESCE(membership_confirmed_at, datetime('now')) ELSE NULL END,
         updated_at = datetime('now')
-    WHERE id = ? AND status = 'pending'
-  `).bind(user.id, referralId).run();
+    WHERE id = ? AND status IN ('pending', 'accepted', 'qualified', 'rewarded', 'capped')
+      AND (invitee_user_id IS NULL OR invitee_user_id = ?)
+  `).bind(user.id, membership?.data.length ? 1 : 0, referralId, user.id).run();
   return true;
 }
 
@@ -670,6 +725,8 @@ export async function revokeCrewWebhook(
     await deleteCrewStageForOrganization(env, organizationId);
     await env.DB.batch([
       env.DB.prepare('DELETE FROM fighter_group_grants WHERE clerk_organization_id = ?').bind(organizationId),
+      env.DB.prepare(`UPDATE crew_referrals SET membership_confirmed_at = NULL
+        WHERE clerk_organization_id = ?`).bind(organizationId),
       env.DB.prepare(`
         UPDATE crew_referrals SET status = 'revoked', updated_at = datetime('now')
         WHERE clerk_organization_id = ? AND status IN ('pending', 'accepted')
@@ -684,6 +741,8 @@ export async function revokeCrewWebhook(
     .bind(clerkUserId).first<{ id: string }>();
   if (!organizationId || !user) return false;
   await env.DB.batch([
+    env.DB.prepare(`UPDATE crew_referrals SET membership_confirmed_at = NULL
+      WHERE clerk_organization_id = ? AND invitee_user_id = ?`).bind(organizationId, user.id),
     env.DB.prepare(`
       DELETE FROM fighter_group_grants
       WHERE clerk_organization_id = ? AND granted_by_user_id = ?

@@ -1,37 +1,47 @@
-import type { FighterGameMode } from './FighterAssetPacks.ts';
-import type { GenerationPackage } from './GenerationPackages.ts';
-import type { QualityTier } from './QualityTiers.ts';
-
-export type ProductEventName = 'game_started' | 'game_completed' | 'creation_started' | 'creation_completed'
-  | 'onboarding_started' | 'onboarding_completed' | 'onboarding_skipped'
-  | 'challenge_created' | 'challenge_opened' | 'challenge_started' | 'challenge_completed' | 'share_video';
-export interface ProductEventProperties {
-  game?: FighterGameMode;
-  package?: GenerationPackage;
-  tier?: QualityTier;
-  source?: 'trial' | 'roster' | 'landing' | 'challenge' | 'creation';
-  durationMs?: number;
-  credits?: number;
-}
+import { productChannelFromSearch, sanitizeProductEvent, type ProductChannel, type ProductEventName, type ProductEventProperties } from './ProductEventContract.ts';
+export type { ProductEventName, ProductEventProperties } from './ProductEventContract.ts';
 export interface ProductEvent { name: ProductEventName; at: number; properties: ProductEventProperties }
 const KEY = 'ip:product-diagnostics:v1';
+let pageChannel: ProductChannel | undefined;
+let sentThisPage = 0;
 
-/** Device-only pilot diagnostics. No identifiers, photos, URLs or network delivery. */
+function aggregateMeasurementAllowed(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const browser = navigator as Navigator & { globalPrivacyControl?: boolean };
+  return browser.doNotTrack !== '1' && browser.globalPrivacyControl !== true;
+}
+
+function sendAggregateEvent(event: ProductEvent): void {
+  const base = String(import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/+$/, '');
+  if (!base || !aggregateMeasurementAllowed() || sentThisPage >= 100) return;
+  sentThisPage += 1;
+  // No tokens, cookies, referrer, event timestamp, retry queue or visitor ID.
+  // Delivery is best effort: analytics failure must not affect a game or purchase.
+  try {
+    void fetch(`${base}/api/product-events`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: event.name, properties: event.properties }),
+      credentials: 'omit',
+      referrerPolicy: 'no-referrer',
+      keepalive: true,
+    }).catch(() => {});
+  } catch { /* Unavailable fetch is harmless. */ }
+}
+
+/** Local diagnostics plus first-party anonymous daily counts; no user/session IDs. */
 export function trackProductEvent(name: ProductEventName, properties: ProductEventProperties = {}): void {
   if (typeof window === 'undefined') return;
-  const safe: ProductEventProperties = {};
-  if (['aura', 'fight', 'rush'].includes(properties.game ?? '')) safe.game = properties.game;
-  if (['aura', 'complete'].includes(properties.package ?? '')) safe.package = properties.package;
-  if (['rookie', 'contender', 'champion'].includes(properties.tier ?? '')) safe.tier = properties.tier;
-  if (['trial', 'roster', 'landing', 'challenge', 'creation'].includes(properties.source ?? '')) safe.source = properties.source;
-  if (Number.isFinite(properties.durationMs)) safe.durationMs = Math.max(0, Math.min(86_400_000, Math.round(properties.durationMs!)));
-  if (Number.isFinite(properties.credits)) safe.credits = Math.max(0, Math.min(1000, properties.credits!));
-  const event: ProductEvent = { name, at: Date.now(), properties: safe };
+  pageChannel ??= productChannelFromSearch(window.location?.search ?? '');
+  const sanitized = sanitizeProductEvent({ name, properties: { channel: pageChannel, ...properties } });
+  if (!sanitized) return;
+  const event: ProductEvent = { ...sanitized, at: Date.now() };
   try {
     const previous: unknown = JSON.parse(localStorage.getItem(KEY) ?? '[]');
     const events = Array.isArray(previous) ? previous.slice(-199) : [];
     localStorage.setItem(KEY, JSON.stringify([...events, event]));
   } catch { /* Diagnostics must never interrupt gameplay or purchases. */ }
+  sendAggregateEvent(event);
 }
 
 export function readProductEvents(): ProductEvent[] {

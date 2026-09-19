@@ -54,6 +54,7 @@ import { ensureSystemUser, getLeaderboard, getPlayerStats, reportMatchResult } f
 import { getTempAsset, handleProxy, pixcliBaseUrl } from './proxy';
 import { enforceRateLimit } from './rateLimit';
 import { submitClientError } from './clientErrors';
+import { cleanupProductEventAggregates, getProductEventReport, submitProductEvent } from './productEvents';
 import { createFeatureProviderSession } from './providerSessions';
 import type { AuthContext, Env, PublicAuthContext, User } from './types';
 import { turnstileConfigurationStatus } from './turnstile';
@@ -116,6 +117,7 @@ import {
   getOnboardingStatus,
   getReferralLanding,
   recordOnboardingDebut,
+  recordOnboardingTrial,
   referralRookiePasses,
 } from './referrals';
 import {
@@ -955,7 +957,7 @@ export default {
 
       if (path === '/api/onboarding' && method === 'GET') {
         return addCors(
-          await authenticated(request, env, (auth) => getOnboardingStatus(env, auth)),
+          await authenticatedLimited(request, env, 'crew:status', (auth) => getOnboardingStatus(env, auth)),
           request,
           env,
         );
@@ -971,6 +973,14 @@ export default {
           ),
           request,
           env,
+        );
+      }
+
+      if (path === '/api/onboarding/trial' && method === 'POST') {
+        return addCors(
+          await authenticatedLimited(request, env, 'onboarding:trial',
+            (auth) => recordOnboardingTrial(request, env, auth)),
+          request, env,
         );
       }
 
@@ -1002,7 +1012,7 @@ export default {
 
       if (path === '/api/crew/stage' && method === 'GET') {
         return addCors(
-          await authenticated(request, env, (auth) => getCrewStageStatus(request, env, auth)),
+          await authenticatedLimited(request, env, 'crew:status', (auth) => getCrewStageStatus(request, env, auth)),
           request,
           env,
         );
@@ -1427,6 +1437,17 @@ export default {
         return addCors(await submitClientError(request, env, publicAuth), request, env);
       }
 
+      if (path === '/api/product-events' && method === 'POST') {
+        const limited = await enforceRateLimit(env, 'product:event', publicAuth);
+        if (limited) return addCors(limited, request, env);
+        return addCors(await submitProductEvent(request, env), request, env);
+      }
+
+      if (path === '/api/admin/product-events' && method === 'GET') {
+        return addCors(await authenticatedLimited(request, env, 'admin:product-events',
+          (auth) => getProductEventReport(request, env, auth)), request, env);
+      }
+
       if (path === '/api/matches' && method === 'POST') {
         return addCors(await authenticatedLimited(request, env, 'matches:report', async (auth) => {
           const body = await readJsonBody<Record<string, unknown>>(request, MAX_MATCH_REPORT_BODY_BYTES);
@@ -1518,6 +1539,12 @@ export default {
     }
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
+    try {
+      await cleanupProductEventAggregates(env);
+    } catch (error) {
+      // Measurement must never block billing reconciliation or asset cleanup.
+      console.error('Product aggregate retention failed', error);
+    }
     await cleanupOperationalData(env);
   },
 };

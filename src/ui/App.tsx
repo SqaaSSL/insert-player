@@ -49,9 +49,15 @@ import {
   readCreationNavigationContext,
   readPreferredArcadePlayerPhotoHash,
   rememberCreationPurchaseIntent,
+  type CreationNavigationContext,
 } from './shared/onboardingFlow.ts';
 import { readPendingVersusInvite } from './shared/versusInvite.ts';
-import { recordOnboardingDebut } from '../services/Crews.ts';
+import {
+  loadOnboardingStatus,
+  recordDebutWithRecovery,
+  syncOnboardingProgress,
+  type OnboardingStatus,
+} from '../services/Crews.ts';
 import type { CrewMembershipSummary, CrewSummary } from './crewState.ts';
 
 const GalleryPage = lazy(() => import('./routes/GalleryPage.tsx').then((module) => ({
@@ -152,6 +158,16 @@ export function gameRouteForMatch(match: Pick<MatchSceneData, 'gameMode'>): Game
   if (match.gameMode === 'rush') return '/rush';
   if (match.gameMode === 'aura') return '/aura';
   return '/fight';
+}
+
+export function shouldGuideCreatedRookieDebut(
+  creation: CreationNavigationContext,
+  onboarding: Pick<OnboardingStatus, 'fighter' | 'debutComplete' | 'complete'> | null,
+  photoHash: string,
+): boolean {
+  return !creation.challenge
+    && Boolean(onboarding && !onboarding.debutComplete && !onboarding.complete
+      && onboarding.fighter?.photoHash === photoHash);
 }
 
 export function legalReturnRouteFromState(state: unknown): AppRoute {
@@ -392,11 +408,68 @@ export function App({
     : null;
   const previousRouteRef = useRef<AppRoute>(route);
   const trialLaunchEpochRef = useRef(0);
+  const currentNavigationRef = useRef({ authSessionKey, route, routeSearch });
+  currentNavigationRef.current = { authSessionKey, route, routeSearch };
+  const visitedRef = useRef(false);
+  const measuredAccountsRef = useRef(new Set<string>());
+  const [onboardingSnapshot, setOnboardingSnapshot] = useState<{
+    account: string;
+    crewId: string | null;
+    status: OnboardingStatus;
+  } | null>(null);
+  const onboardingStatus = authStatus === 'signed-in'
+    && onboardingSnapshot?.account === authSessionKey
+    && onboardingSnapshot.crewId === (activeCrew?.id ?? null)
+      ? onboardingSnapshot.status : null;
   const [postSignUpTrialRequested, setPostSignUpTrialRequested] = useState(false);
   const creationPurchaseIntent = useMemo(
     () => route === '/credits' || route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
     [authSessionKey, route],
   );
+
+  useEffect(() => {
+    if (!visitedRef.current) {
+      visitedRef.current = true;
+      trackProductEvent('platform_visited', { source: route === '/join' ? 'referral'
+        : route === '/challenge' || route.startsWith('/watch/') ? 'challenge'
+          : route === '/onboarding' ? 'onboarding' : 'landing' });
+    }
+    if (authStatus === 'signed-in' && !measuredAccountsRef.current.has(authSessionKey)) {
+      measuredAccountsRef.current.add(authSessionKey);
+      trackProductEvent('account_ready');
+    }
+  }, [authStatus, authSessionKey, route]);
+
+  useEffect(() => {
+    if (authStatus !== 'signed-in' || !['/', '/menu', '/onboarding', '/fighters/new'].includes(route)) return;
+    let active = true;
+    let refreshing = false;
+    const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        try { await syncOnboardingProgress(authSessionKey); }
+        catch (error) { debugWarn('[Onboarding] Saved progress will retry:', error instanceof Error ? error.message : error); }
+        if (!active || currentNavigationRef.current.authSessionKey !== authSessionKey) return;
+        const status = await loadOnboardingStatus();
+        if (active && currentNavigationRef.current.authSessionKey === authSessionKey) {
+          setOnboardingSnapshot({ account: authSessionKey, crewId: activeCrew?.id ?? null, status });
+        }
+      } catch (error) {
+        debugWarn('[Onboarding] Progress will retry when the connection returns:', error instanceof Error ? error.message : error);
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refresh();
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    return () => {
+      active = false;
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+    };
+  }, [authStatus, authSessionKey, activeCrew?.id, route]);
 
   useEffect(() => {
     setPendingMatchState({
@@ -463,7 +536,8 @@ export function App({
         debugWarn('[AppRouter] Match could not be persisted for reload recovery');
       }
       rememberLastGame(authSessionKey, data.gameMode ?? 'fight');
-      trackProductEvent('game_started', { game: data.gameMode ?? 'fight', source: data.experience === 'trial' ? 'trial' : 'roster' });
+      trackProductEvent('game_started', { game: data.gameMode ?? 'fight', source: data.auraChallenge ? 'challenge'
+        : data.experience === 'trial' ? 'trial' : data.experience === 'onboarding' ? 'onboarding' : 'roster' });
       setPendingMatchState({ authSessionKey, data });
       debugInfo('[AppRouter] Starting game from roster', {
         gameMode: data.gameMode ?? 'fight',
@@ -559,7 +633,8 @@ export function App({
   }, [authStatus, postSignUpTrialRequested, route, tryGame]);
 
   const finishFight = useCallback(() => {
-    trackProductEvent('game_completed', { game: pendingMatch?.gameMode ?? 'fight', source: pendingMatch?.experience === 'trial' ? 'trial' : 'roster' });
+    trackProductEvent('game_completed', { game: pendingMatch?.gameMode ?? 'fight', source: pendingMatch?.auraChallenge ? 'challenge'
+      : pendingMatch?.experience === 'trial' ? 'trial' : pendingMatch?.experience === 'onboarding' ? 'onboarding' : 'roster' });
     writeStoredMatch(null, authSessionKey);
     debugInfo('[AppRouter] Cleared completed match recovery state');
   }, [authSessionKey, pendingMatch]);
@@ -726,7 +801,7 @@ export function App({
         />
       );
     }
-    if ((route === '/' && !readLastGame(authSessionKey)) || route.startsWith('/games/')) {
+    if ((route === '/' && !readLastGame(authSessionKey) && !onboardingStatus) || route.startsWith('/games/')) {
       const mode: FighterGameMode = route === '/games/fight' ? 'fight' : route === '/games/rush' ? 'rush' : 'aura';
       return <GameLandingPage mode={mode} onPlay={tryGame} onCreate={createForGame} onExplore={(game) => navigate(`/games/${game}`)}
         onChooseCharacter={mode === 'aura' ? () => navigate('/roster/aura') : undefined}
@@ -737,7 +812,8 @@ export function App({
     }
     if (route === '/menu' || route === '/') return <PlayPage lastGame={readLastGame(authSessionKey)} onPlay={(mode) => readLastGame(authSessionKey) ? openGame(mode) : tryGame(mode)}
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
-      onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')} />;
+      onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')}
+      onboardingStatus={onboardingStatus} onContinueOnboarding={() => navigate('/onboarding')} />;
     if (route === '/credits') {
       let returnTo: AppRoute | null = null;
       try { const saved = sessionStorage.getItem(`insert-player:finisher-return:${authSessionKey}`); if (saved && isBattleRoute(saved)) returnTo = saved as AppRoute; } catch { /* optional return context */ }
@@ -794,7 +870,9 @@ export function App({
       const params = new URLSearchParams(routeSearch);
       return (
         <CrewOnboardingPage
+          key={authSessionKey}
           authStatus={authStatus}
+          authSessionKey={authSessionKey}
           authSlot={authSlot}
           playerName={playerName}
           activeCrew={activeCrew}
@@ -803,6 +881,8 @@ export function App({
           fighterPhotoHash={params.get('player')}
           onCreateCrew={onCreateCrew}
           onSelectCrew={onSelectCrew}
+          onPlayTrial={() => void tryGame('aura')}
+          onPlayDebut={(photoHash) => navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString())}
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',
           }))}
@@ -816,6 +896,7 @@ export function App({
       const params = new URLSearchParams(routeSearch);
       return (
         <CrewJoinPage
+          key={`${authSessionKey}:${params.get('referral') ?? ''}`}
           referralId={params.get('referral')}
           authStatus={authStatus}
           authSlot={authSlot}
@@ -827,6 +908,7 @@ export function App({
           onCreateRookie={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'referral',
           }))}
+          onPlayCrew={() => navigate('/roster/aura')}
           onBack={() => navigate('/menu')}
         />
       );
@@ -863,17 +945,33 @@ export function App({
           onPlayTrial={() => void tryGame('aura')}
           authStatus={authStatus}
           authSessionKey={authSessionKey}
-          completionLabel={creationContext.source === 'trial' || creationContext.source === 'referral'
+          completionLabel={!creationContext.challenge && creationContext.tier === 'rookie'
+            && onboardingStatus && !onboardingStatus.debutComplete && !onboardingStatus.complete
             ? 'Make My Aura Debut'
             : creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
           onBack={() => creationContext.challenge
             ? navigate('/challenge', new URLSearchParams({ challenge: creationContext.challenge }).toString())
             : navigate(destination)}
-          onComplete={(photoHash) => creationContext.challenge
-            ? navigate('/challenge', new URLSearchParams({challenge: creationContext.challenge, player: photoHash}).toString())
-            : creationContext.source === 'trial' || creationContext.source === 'referral'
-              ? navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString())
-              : navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash))}
+          onComplete={(photoHash) => {
+            if (creationContext.challenge) {
+              navigate('/challenge', new URLSearchParams({ challenge: creationContext.challenge, player: photoHash }).toString());
+              return;
+            }
+            const navigation = currentNavigationRef.current;
+            void (async () => {
+              let status = onboardingStatus;
+              if (authStatus === 'signed-in') {
+                try { status = await loadOnboardingStatus(); }
+                catch (error) { debugWarn('[Onboarding] The next mission will be available from Play:', error instanceof Error ? error.message : error); }
+              }
+              const current = currentNavigationRef.current;
+              if (current.authSessionKey !== navigation.authSessionKey || current.route !== navigation.route
+                || current.routeSearch !== navigation.routeSearch) return;
+              if (shouldGuideCreatedRookieDebut(creationContext, status, photoHash)) {
+                navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString());
+              } else navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash));
+            })();
+          }}
           onGetCredits={(tier, creationPackage, draftPersisted) => {
             rememberCreationPurchaseIntent(authSessionKey, {
               tier, creationPackage, challenge: creationContext.challenge,
@@ -967,7 +1065,7 @@ export function App({
           ...(pendingMatch.p1CloudFighterId ? { fighter: pendingMatch.p1CloudFighterId } : {}),
           ...(pendingMatch.p1PhotoHash ? { player: pendingMatch.p1PhotoHash } : {}),
         }).toString())}
-        onAuraDebutComplete={recordOnboardingDebut}
+        onAuraDebutComplete={(fighterId) => recordDebutWithRecovery(fighterId, authSessionKey)}
         onOpenArcade={() => leaveFight('/arcade')}
         ladder={ladderContext}
       />
@@ -1003,6 +1101,7 @@ export function App({
     crews,
     onCreateCrew,
     onSelectCrew,
+    onboardingStatus,
   ]);
 
   const routedContent = (

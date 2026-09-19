@@ -12,6 +12,7 @@ import {
   type CachedStageBackground,
   type CachedStageSource,
 } from './SpriteCache.ts';
+import { trackProductEvent } from './ProductEvents.ts';
 
 const MAX_CREW_STAGE_BYTES = 5 * 1024 * 1024;
 const CREW_STAGE_CACHE_VERSION = 'crew-stage-v1';
@@ -30,6 +31,8 @@ export interface CrewStageSummary {
 export interface CrewStageStatus {
   claimState: 'available' | 'reserved' | 'ready';
   canCreate: boolean;
+  canResumeCreate?: boolean;
+  eligibilityReason: 'crew_stage_friend_required' | 'crew_stage_verification_unavailable' | null;
   stage: CrewStageSummary | null;
 }
 
@@ -77,7 +80,7 @@ export function isStageVisibleToActiveCrew(
 export async function loadCrewStage(
   context: ApiRequestContext = captureApiRequestContext(),
 ): Promise<CrewStageStatus> {
-  if (isLocalDevWithoutApi()) return { claimState: 'available', canCreate: true, stage: null };
+  if (isLocalDevWithoutApi()) return { claimState: 'available', canCreate: true, eligibilityReason: null, stage: null };
   const res = await apiFetch('/api/crew/stage', {}, context);
   if (!res.ok) throw await apiError(res, `Crew stage failed (${res.status})`);
   const body = await res.json() as Partial<CrewStageStatus>;
@@ -86,9 +89,15 @@ export async function loadCrewStage(
   if (!['available', 'reserved', 'ready'].includes(body.claimState ?? '')) {
     throw new Error('Crew stage returned an invalid claim state.');
   }
+  const eligibilityReason = body.eligibilityReason ?? null;
+  if (eligibilityReason !== null && !['crew_stage_friend_required', 'crew_stage_verification_unavailable'].includes(eligibilityReason)) {
+    throw new Error('Crew stage returned an invalid eligibility reason. Try checking again.');
+  }
   return {
     claimState: body.claimState as CrewStageStatus['claimState'],
-    canCreate: body.canCreate === true,
+    canCreate: body.canCreate === true && body.claimState === 'available' && eligibilityReason === null,
+    canResumeCreate: body.canResumeCreate === true && body.claimState === 'reserved',
+    eligibilityReason,
     stage,
   };
 }
@@ -184,6 +193,7 @@ export async function saveCrewStage(
   const body = await res.json() as { stage?: unknown };
   const summary = parseCrewStageSummary(body.stage);
   if (!summary) throw new Error('Crew stage save returned an invalid stage.');
+  trackProductEvent('stage_completed', { source: 'crew' });
   return cacheCrewStage(summary, stage.pngBlob, crew);
 }
 
