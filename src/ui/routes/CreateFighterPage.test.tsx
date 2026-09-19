@@ -58,6 +58,18 @@ describe('Aura character creation entry', () => {
     expect(markup).not.toContain('Create Free Rookie');
     expect(markup).not.toContain('No credits charged');
   });
+
+  it('asks about public figures before quality, credits and consent with no default answer', () => {
+    const markup = renderAuraEntry('?tier=rookie&package=complete', 'signed-in');
+    const question = markup.indexOf('Is this a famous person?');
+    expect(question).toBeGreaterThan(markup.indexOf('Source Photo'));
+    expect(question).toBeLessThan(markup.indexOf('Quality options'));
+    expect(question).toBeLessThan(markup.indexOf('Process this photo only'));
+    expect(markup.match(/name="fighter-public-figure"/g)).toHaveLength(2);
+    expect(markup).not.toMatch(/name="fighter-public-figure"[^>]*checked/);
+    expect(markup).toContain('Choose whether this is a famous person to continue');
+    expect(markup).not.toContain('Famous people may not generate');
+  });
 });
 
 function recoveryJob(overrides: Partial<GenerationJob> = {}): GenerationJob {

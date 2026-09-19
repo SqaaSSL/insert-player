@@ -27,13 +27,14 @@ stale, dirty, or wrongly named deployment checkouts.
 Start a branch from the branch it will target. Use `develop` when a change needs
 an intentional sandbox soak, and sync current `main` into it before deploying if
 the branches have drifted. Never merge a branch based on stale application code
-just to publish one feature. `development` may cancel an older in-progress
-deployment when a newer commit arrives. `production` never cancels an
-in-progress deployment.
+just to publish one feature. Validation runs independently for each revision.
+Once a production or development publication starts, newer pushes do not cancel
+it; GitHub queues later publication jobs.
 
 ## Workflows
 
-- `ci.yml`: required pull-request and branch validation.
+- `ci.yml`: required pull-request validation and manual validation runs.
+  Canonical branch pushes validate in their deployment workflow.
 - `validate.yml`: reusable production gate, full builds, Worker dry-runs, and a fail-closed check of high or critical Dependabot alerts against the checked-out lockfiles.
 - `dependency-security.yml`: GitHub Dependency Review blocks pull requests that introduce high or critical vulnerabilities in runtime, development, or unknown scopes.
 - `deploy-development.yml`: `develop` to the isolated sandbox.
@@ -49,10 +50,56 @@ in-progress deployment.
 - `codeql.yml`: JavaScript/TypeScript code scanning on pull requests, protected branches, and weekly schedule.
 - `dependabot.yml`: weekly frontend, Worker, and GitHub Actions updates.
 
+## Parallel validation and release queues
+
+Push separate feature branches and open separate PRs without waiting for another
+PR's pipeline. CI, CodeQL and dependency review use workflow/ref-specific
+concurrency groups: different PRs run in parallel; newer revisions replace only
+obsolete checks for that same PR. Required check names and branch protections
+remain in force.
+
+The production, frontend-only and development workflows validate before entering
+their publication job's concurrency group. A slow production publication therefore
+does not stop the next revision's tests. Each publication still depends on its
+own exact revision's reusable validation. Each `main` or `develop` push validates
+once in its deployment workflow; the separate CI workflow handles PRs. Canonical
+branch workflows deliberately include documentation-only commits: a newer docs
+tip must still publish any cumulative code changes whose older queued job was
+superseded. Pages keeps its environment checks,
+build, release manifest and smoke tests, but does not repeat the already-passed
+full production gate inside the publication lock.
+
+- Production publication jobs and existing production mutation workflows share
+  `production-worker-mutations`. Pages and Worker must keep this shared lock so
+  their compatibility check, publication and rollback cannot race.
+- Development publication uses the independent `deploy-development` group.
+- Both use `cancel-in-progress: false` and `queue: max`: up to 100 pending jobs
+  can wait without replacing each other. Beyond that limit GitHub cancels excess
+  requests. The queue orders by arrival at the lock, not by Git commit order.
+  See [GitHub concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+- Immediately after acquiring the publication lock and checking out the source,
+  `scripts/check-queued-release.mjs` reads the current canonical branch through
+  the GitHub API. A superseded revision completes with a skip summary and all
+  later publication steps skipped. Invalid context or an unavailable API fails
+  closed. Once a current revision begins publishing, it finishes without a
+  mid-publication freshness recheck; the next queued release then follows it.
+
+This concurrency queue coordinates publication jobs; it does not automatically
+merge unapproved PRs. PR integration remains governed by repository protections.
+
+### Diagnosing a pending CodeQL result
+
+The `JavaScript and TypeScript` Actions job and the required `CodeQL` result are
+separate checks. A successful analysis upload may remain in GitHub's processing
+queue after the Actions job finishes. Inspect both checks and the upload log:
+`Timed out waiting for analysis to finish processing` means server processing is
+pending, not that another PR owns our deployment lock. Preserve the required
+check and wait for processing; repeated uploads can add more work to that queue.
+
 ## Canonical Release Invariant
 
-Both production workflows run `scripts/production-deploy-guard.mjs` immediately
-after checkout. The guard requires a clean tree, `refs/heads/main`, and
+Both production workflows check the queued revision against the current remote
+`main` after checkout, then run `scripts/production-deploy-guard.mjs`. The guard requires a clean tree, `refs/heads/main`, and
 `HEAD == GITHUB_SHA`, then attests that SHA for the remainder of the job. The
 only tracked file the workflow may materialize after attestation is
 `worker/wrangler.toml`; any source change still blocks every production Wrangler
@@ -67,7 +114,9 @@ feature branches because they cannot publish anything.
 
 Run `npm run check:deployment-policy` after editing a workflow. It verifies the
 two canonical push branches and fails if a job can read repository deployment
-credentials or invoke a remote deployment without its GitHub environment.
+credentials or invoke a remote deployment without its GitHub environment. It
+also enforces validation outside the publication lock, the queue policy, and the
+revision guard before any publication steps.
 
 Pages writes `/release.json` into each production build. The propagation and
 canonical smokes require its `gitSha` and entry bundle to match the commit being

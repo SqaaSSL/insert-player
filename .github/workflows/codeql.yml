@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# Independent PRs run in parallel; a newer revision replaces its own old checks.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: JavaScript and TypeScript

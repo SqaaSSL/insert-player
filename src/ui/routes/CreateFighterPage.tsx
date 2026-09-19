@@ -24,6 +24,7 @@ import { Button } from '../components/Button.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
+import { PublicFigureDeclaration } from '../components/PublicFigureDeclaration.tsx';
 import { VideoGenerationReviewGate } from '../components/VideoGenerationReviewGate.tsx';
 import {
   animLabel,
@@ -182,6 +183,7 @@ export function CreateFighterPage({
 }: CreateFighterPageProps) {
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState(DEFAULT_NAME);
+  const [isPublicFigure, setIsPublicFigure] = useState<boolean | null>(null);
   const [tier, setTier] = useState<QualityTier>(() => initialQualityTier(authStatus));
   const [creationPackage, setCreationPackage] = useState<GenerationPackage>('complete');
   const [auraEntry] = useState(() => readCreationNavigationContext(window.location.search).creationPackage === 'aura');
@@ -240,6 +242,7 @@ export function CreateFighterPage({
       const choices = restoreCreationChoices(draft, context);
       setFile(new File([draft.file], draft.fileName, { type: draft.file.type }));
       setName(draft.name);
+      setIsPublicFigure(draft.isPublicFigure ?? null);
       setTier(choices.tier);
       setCreationPackage('complete');
       setCreationFlow(choices.creationFlow);
@@ -256,8 +259,8 @@ export function CreateFighterPage({
       window.history.replaceState(window.history.state, '', `/fighters/new?${search}`);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
-    if (file) void saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, savedAt: Date.now() });
-  }, [draftLoaded, file, name, tier, creationPackage, creationFlow, started, authSessionKey]);
+    if (file) void saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, isPublicFigure, savedAt: Date.now() });
+  }, [draftLoaded, file, name, tier, creationPackage, creationFlow, isPublicFigure, started, authSessionKey]);
 
   useEffect(() => {
     if (!done) return;
@@ -724,6 +727,7 @@ export function CreateFighterPage({
 
   async function startDurable(apiContext: ReturnType<typeof captureApiRequestContext>): Promise<void> {
     if (!file) return;
+    if (isPublicFigure === null) throw new Error('Choose whether this is a famous person before creating your character.');
     if (authStatus !== 'signed-in') throw new Error('Sign in before creating your character.');
     const rendererVersion = rendererForNewFighter(tier);
     setActiveRenderer(rendererVersion);
@@ -883,6 +887,12 @@ export function CreateFighterPage({
       return;
     }
     if ((!file && !resumableJob) || running || !turnstileReady || !legalAccepted || !recoveryReady) return;
+    // Existing paid work resumes from its original job, not a new declaration.
+    if (!resumableJob && isPublicFigure === null) {
+      setError('Choose whether this is a famous person before creating your character.');
+      setStarted(false);
+      return;
+    }
     if (!resumableJob && creationFlow === 'video') {
       setError('This earlier creation option is no longer offered. Reload to review the current options.');
       return;
@@ -1025,6 +1035,7 @@ export function CreateFighterPage({
     setPendingFighterSync(null);
     setSelection({ kind: 'source', source: 'original' });
     setLegalAccepted(false);
+    setIsPublicFigure(null);
     setCreationFlow('original');
     setCreationPackage('complete');
     setServerProgress(null);
@@ -1144,6 +1155,8 @@ export function CreateFighterPage({
                 setDraftMessage(null);
                 if (!event.target.files?.[0]) void clearCreationDraft(authSessionKey);
                 setFile(event.target.files?.[0] ?? null);
+                setIsPublicFigure(null);
+                setLegalAccepted(false);
                 setResumableJob(null);
                 setVideoReviewJob(null);
               }}
@@ -1165,6 +1178,14 @@ export function CreateFighterPage({
             </div>
           ) : null}
           {file ? <p className="tier-picker__note">Photo selected: {file.name}</p> : null}
+          <PublicFigureDeclaration
+            value={isPublicFigure}
+            disabled={running}
+            onChange={(value) => {
+              setIsPublicFigure(value);
+              setLegalAccepted(false);
+            }}
+          />
           <details className="creation-advanced">
             <summary>Quality options · {selectedTier?.label}</summary>
           <fieldset className="tier-picker" aria-describedby="tier-picker-note">
@@ -1251,14 +1272,14 @@ export function CreateFighterPage({
           {error ? <p className="create-intro__error" role="alert">{error}</p> : null}
           <button
             className="home-menu__action is-primary"
-            disabled={running || auraNeedsAccount || creditCheckPending || (insufficientCredits
+            disabled={running || auraNeedsAccount || creditCheckPending || isPublicFigure === null || (insufficientCredits
               ? !onGetCredits
               : !file || !name.trim() || !turnstileReady || !legalAccepted || !recoveryReady)}
             onClick={async () => {
               if (insufficientCredits) {
                 let draftPersisted = true;
                 if (file) {
-                  draftPersisted = await saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, savedAt: Date.now() });
+                  draftPersisted = await saveCreationDraft(authSessionKey, { file, fileName: file.name, name, tier, creationPackage, creationFlow, isPublicFigure, savedAt: Date.now() });
                 }
                 onGetCredits?.(tier, creationPackage, draftPersisted);
                 return;
@@ -1276,7 +1297,9 @@ export function CreateFighterPage({
                     ? 'Authorizing...'
                     : startLabel}</span>
             <small>
-              {insufficientCredits
+              {isPublicFigure === null
+                ? 'Choose whether this is a famous person to continue'
+                : insufficientCredits
                 ? `${selectedTier?.label ?? 'This tier'} needs ${selectedQuote.creditCost} credits · you have ${billingProfile?.creditsBalance ?? 0}`
                 : file
                 ? file.name

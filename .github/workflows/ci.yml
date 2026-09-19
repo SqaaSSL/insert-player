@@ -1,11 +1,10 @@
 name: CI
 
+# Canonical branch pushes validate in their deployment workflow.
+# PRs remain independent and never enter a publication queue.
+
 on:
   pull_request:
-    branches:
-      - develop
-      - main
-  push:
     branches:
       - develop
       - main

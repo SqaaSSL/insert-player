@@ -1,10 +1,7 @@
 name: Deploy frontend only
 
-# Ships Pages (landing + app UI) without touching the Worker, D1, or any
-# Durable Object lifecycle. Use for frontend-only changes so they never
-# queue behind — or share risk with — Worker rollouts. Pages deployments
-# are immutable per-deploy, so rolling back is redeploying the previous
-# build.
+# Validate independently, then publish Pages under the shared release lock.
+# The lock preserves the Worker compatibility check through upload and smoke.
 
 on:
   workflow_dispatch:
@@ -19,14 +16,19 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: production-worker-mutations
-  cancel-in-progress: false
+  vulnerability-alerts: read
 
 jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
   deploy-frontend:
     name: Build, deploy, and smoke Pages only
+    needs: validate
+    concurrency:
+      group: production-worker-mutations
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment:
@@ -62,12 +64,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check queued release revision
+        id: queued-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-queued-release.mjs --branch=main
+
       - name: Attest canonical production source
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           node scripts/production-deploy-guard.mjs
           printf 'ASF_CANONICAL_RELEASE_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
+        if: steps.queued-release.outputs.current == 'true'
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -78,15 +88,19 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Materialize brand clearance
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ASF_BRAND_CLEARANCE_FILE: ${{ runner.temp }}/brand-clearance.json
           BRAND_CLEARANCE_JSON: ${{ secrets.BRAND_CLEARANCE_JSON }}
@@ -101,6 +115,7 @@ jobs:
           printf '%s\n' "ASF_BRAND_CLEARANCE_FILE=$ASF_BRAND_CLEARANCE_FILE" >> "$GITHUB_ENV"
 
       - name: Guard frontend/Worker contract drift
+        if: steps.queued-release.outputs.current == 'true'
         env:
           ACKNOWLEDGE_WORKER_DRIFT: ${{ inputs.acknowledge_worker_drift == true && '1' || '0' }}
         run: |
@@ -130,6 +145,7 @@ jobs:
           fi
 
       - name: Verify compatible image processor before Pages
+        if: steps.queued-release.outputs.current == 'true'
         timeout-minutes: 22
         env:
           ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
@@ -137,15 +153,14 @@ jobs:
         run: npm run check:image-processor-contract
 
       - name: Build, deploy, and smoke Pages
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          # Pages-only rollout: the FFmpeg/Container toolchain is untouched, so
-          # the video-compiler revalidation from the full pipeline is skipped.
-          VIDEO_SPRITE_PRODUCTION_TOOLCHAIN_VALIDATED: "1"
-        run: npm run deploy:frontend
+        run: npm run deploy:frontend -- --skip-production-check
 
       - name: Publish deployment summary
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           printf '%s\n' '## Frontend-only production deployment' >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' '- Frontend: https://insertplayer.ai' >> "$GITHUB_STEP_SUMMARY"

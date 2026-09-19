@@ -15,6 +15,8 @@ export interface OnboardingStatus {
     role: string | null;
   } | null;
   invitesSent: number;
+  invitesAccepted: number;
+  pendingInvite: CrewInviteLink | null;
   sharedWithActiveCrew: boolean;
   canInviteCrew: boolean;
   crewStage: {
@@ -38,10 +40,11 @@ export interface ReferralLanding {
   status: 'pending' | 'accepted' | 'qualified' | 'rewarded' | 'capped';
 }
 
-export interface CrewInvitationResult {
+export interface CrewInviteLink {
   id: string;
   status: 'pending';
   expiresAt: string;
+  url: string;
 }
 
 async function apiError(res: Response, fallback: string): Promise<Error> {
@@ -64,18 +67,25 @@ export async function loadReferralLanding(referralId: string): Promise<ReferralL
   return body.invitation;
 }
 
-export async function sendCrewInvitation(
-  email: string,
+export async function createCrewInviteLink(
   context: ApiRequestContext = captureApiRequestContext(),
-): Promise<CrewInvitationResult> {
-  const res = await apiFetch('/api/crew/invitations', {
+): Promise<CrewInviteLink> {
+  const res = await apiFetch('/api/crew/invite-links', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
   }, context);
-  if (!res.ok) throw await apiError(res, `Crew invitation failed (${res.status})`);
-  const body = await res.json() as { invitation: CrewInvitationResult };
+  if (!res.ok) throw await apiError(res, `Crew invite link failed (${res.status})`);
+  const body = await res.json() as { invitation: CrewInviteLink };
   return body.invitation;
+}
+
+export async function acceptCrewInviteLink(
+  referralId: string,
+  context: ApiRequestContext = captureApiRequestContext(),
+): Promise<void> {
+  const res = await apiFetch(`/api/referrals/${encodeURIComponent(referralId)}/accept`, {
+    method: 'POST',
+  }, context);
+  if (!res.ok) throw await apiError(res, `Crew invitation could not be accepted (${res.status})`);
 }
 
 export async function recordOnboardingDebut(

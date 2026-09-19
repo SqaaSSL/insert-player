@@ -213,7 +213,7 @@ function PrivacyPolicy() {
           <li>Aura match recordings and the public name, score, and challenge routine you choose to publish in a battle link.</li>
           <li>Checkout references and payment status from Stripe. Insert Player does not receive or store your full card number.</li>
           <li>Community reports, bounded report details, report counts, moderation decisions, and moderator notes.</li>
-          <li>Crew identifiers, fighter-sharing grants, invitation status, referral reward status, and one-way keyed hashes used to detect repeat email or social-account rewards. Clerk receives the invitation email; Insert Player does not duplicate the raw invitation email in its referral table.</li>
+          <li>Crew identifiers, fighter-sharing grants, invitation channel and status, referral reward status, and one-way keyed hashes used to detect repeat social-account rewards. For WhatsApp invites, we create the link and message you choose to share; Insert Player does not receive your contacts or their phone numbers. Legacy email invitations are handled by Clerk without duplicating the raw address in our referral table.</li>
           <li>Security and diagnostic data, including pseudonymized network identifiers, request timing, errors, and abuse counters.</li>
         </ul>
         <p>Insert Player does not use your photo to verify your identity, identify you in other images, or create a biometric identity database.</p>
@@ -225,7 +225,7 @@ function PrivacyPolicy() {
           <li>To create, store, sync, upgrade, and play the fighter you request, share its clean playable derivatives with your selected Crew, and publish those derivatives to Community only when you choose.</li>
           <li>To authenticate your account, fulfil purchases, settle generation credits, investigate failures, and provide support or mandatory remedies.</li>
           <li>To prevent fraud, enforce rate limits, secure private assets, and investigate service failures.</li>
-          <li>To send requested Crew invitations, confirm referral eligibility, prevent repeat rewards, and issue or reconcile earned Rookie passes.</li>
+          <li>To create requested Crew invite links, add a friend who claims one to the Crew, confirm referral eligibility, prevent repeat rewards, and issue or reconcile earned Rookie passes.</li>
           <li>To investigate community safety reports and remove content that breaches these terms or applicable law.</li>
           <li>To meet tax, accounting, consumer-protection, and other legal duties.</li>
         </ul>

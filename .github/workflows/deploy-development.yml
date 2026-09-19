@@ -4,17 +4,11 @@ on:
   push:
     branches:
       - develop
-    paths-ignore:
-      - '**/*.md'
   workflow_dispatch:
 
 permissions:
   contents: read
   vulnerability-alerts: read
-
-concurrency:
-  group: deploy-development
-  cancel-in-progress: true
 
 jobs:
   validate:
@@ -23,6 +17,10 @@ jobs:
   deploy:
     name: Deploy sandbox
     needs: validate
+    concurrency:
+      group: deploy-development
+      cancel-in-progress: false
+      queue: max
     runs-on: ubuntu-latest
     timeout-minutes: 35
     environment:
@@ -59,12 +57,20 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check queued release revision
+        id: queued-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-queued-release.mjs --branch=develop
+
       - name: Attest canonical development source
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           node scripts/development-deploy-guard.mjs
           printf 'ASF_CANONICAL_DEVELOPMENT_ATTESTED_SHA=%s\n' "$GITHUB_SHA" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
+        if: steps.queued-release.outputs.current == 'true'
         uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -75,15 +81,19 @@ jobs:
             processor/package-lock.json
 
       - name: Install frontend dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm ci --no-audit --no-fund
 
       - name: Install Worker dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix worker ci --no-audit --no-fund
 
       - name: Install processor dependencies
+        if: steps.queued-release.outputs.current == 'true'
         run: npm --prefix processor ci --no-audit --no-fund
 
       - name: Configure, migrate, deploy, and smoke Worker
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -106,12 +116,14 @@ jobs:
         run: node scripts/apply-sandbox-config.mjs --require-complete --skip-production-check --deploy-worker
 
       - name: Build, deploy, and smoke Pages
+        if: steps.queued-release.outputs.current == 'true'
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node scripts/deploy-frontend-pages.mjs --target=sandbox --skip-production-check
 
       - name: Publish deployment summary
+        if: steps.queued-release.outputs.current == 'true'
         run: |
           printf '%s\n' '## Development deployment' >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' '- Frontend: https://insert-player-sandbox.pages.dev' >> "$GITHUB_STEP_SUMMARY"

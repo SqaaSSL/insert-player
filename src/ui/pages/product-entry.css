@@ -363,3 +363,9 @@
 .product-entry__pricing dd small {
   @apply mt-2 block max-w-[16ch] text-[11px] font-normal leading-relaxed text-asf-muted;
 }
+.product-entry__copy-target {
+  position: fixed;
+  inset: 0 auto auto 0;
+  opacity: 0;
+  pointer-events: none;
+}
