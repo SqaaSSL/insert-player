@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiRequestTimeoutError, configureApiAuth } from './ApiClient.ts';
-import { acceptCrewInviteLink, createCrewInviteLink, loadOnboardingStatus, loadReferralLanding, recordDebutWithRecovery, rememberCompletedAuraTrial, syncOnboardingProgress } from './Crews.ts';
+import { acceptCrewInviteLink, createCrewInviteLink, loadOnboardingStatus, loadReferralLanding, recordDebutWithRecovery, rememberCompletedTrial, syncOnboardingProgress } from './Crews.ts';
 
 const FIGHTER = 'a'.repeat(32);
 const OTHER = 'b'.repeat(32);
@@ -67,7 +67,7 @@ describe('account-scoped onboarding recovery', () => {
   });
 
   it('saves an anonymous trial once after sign-in', async () => {
-    rememberCompletedAuraTrial();
+    rememberCompletedTrial();
     await syncOnboardingProgress('player-a');
     await syncOnboardingProgress('player-a');
     expect(fetchMock).toHaveBeenCalledOnce();
@@ -75,7 +75,7 @@ describe('account-scoped onboarding recovery', () => {
   });
 
   it('shares a pending recovery request between App and the Crew page', async () => {
-    rememberCompletedAuraTrial();
+    rememberCompletedTrial();
     let respond!: (response: Response) => void;
     fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { respond = resolve; }));
     const first = syncOnboardingProgress('player-a');
@@ -88,7 +88,7 @@ describe('account-scoped onboarding recovery', () => {
   });
 
   it('still retries the valuable debut when trial sync fails', async () => {
-    rememberCompletedAuraTrial();
+    rememberCompletedTrial();
     values.set(pendingKey('player-a'), JSON.stringify({ fighterId: FIGHTER, at: Date.now() }));
     fetchMock.mockImplementation(async (url: string) => new Response('{}', { status: url.endsWith('/trial') ? 503 : 200 }));
     await expect(syncOnboardingProgress('player-a')).rejects.toThrow();

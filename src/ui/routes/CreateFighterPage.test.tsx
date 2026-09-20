@@ -50,7 +50,9 @@ describe('Aura character creation entry', () => {
   it('requires sign-in without promising an anonymous free Aura generation', () => {
     const markup = renderAuraEntry();
     expect(markup).toContain('Sign in / Join');
-    expect(markup).toContain('Play a free battle');
+    expect(markup).toContain('Try Aura');
+    expect(markup).toContain('Try Fight');
+    expect(markup).not.toContain('Try Rush');
     expect(markup).toContain('First Rookie included if your account has not used it');
     expect(markup).toContain('After that, Rookie costs 2 credits');
     expect(markup).not.toContain('type="file"');
