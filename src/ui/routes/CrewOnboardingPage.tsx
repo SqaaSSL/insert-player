@@ -13,6 +13,7 @@ import { trackProductEvent } from '../../services/ProductEvents.ts';
 import type { AuthStatus } from '../authState.ts';
 import type { CrewMembershipSummary, CrewSummary } from '../crewState.ts';
 import { Button } from '../components/Button.tsx';
+import { TrialGameChoice, type TrialGameMode } from '../components/TrialGameChoice.tsx';
 import { StatusMessage } from '../components/StatusMessage.tsx';
 import '../pages/product-entry.css';
 
@@ -28,7 +29,7 @@ interface CrewOnboardingPageProps {
   onCreateCrew?: (name: string) => Promise<CrewSummary>;
   onSelectCrew?: (organizationId: string) => Promise<void>;
   onCreateFighter: () => void;
-  onPlayTrial?: () => void;
+  onPlayTrial?: (mode: TrialGameMode) => void | Promise<void>;
   onPlayDebut?: (photoHash: string) => void;
   onCreateStage: () => void;
   onSignIn?: () => void;
@@ -304,9 +305,9 @@ export function CrewOnboardingPage({
       <div className="product-entry">
         <section className="product-entry__identity">
           <div className="product-entry__identity-copy">
-            <h1>Your First Aura Run</h1>
-            <p>Learn the beat, create your own Rookie, then bring your friends and choose a home stage together.</p>
-            {onPlayTrial ? <Button variant="primary" size="lg" onClick={onPlayTrial}>Try Aura First</Button> : null}
+            <h1>Your First Game</h1>
+            <p>Try Aura or Fight, create your own Rookie, then bring your friends and choose a home stage together.</p>
+            {onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
             {onSignIn ? <Button variant={onPlayTrial ? 'ghost' : 'primary'} onClick={onSignIn}>Sign In To Continue</Button> : authSlot}
           </div>
           <div className="gallery-panel">
@@ -322,8 +323,8 @@ export function CrewOnboardingPage({
     <div className="product-entry">
       <div className="product-entry__page-heading">
         <div>
-          <p className="product-entry__genre">Aura onboarding</p>
-          <h1>{step === 'create' || step === 'debut' ? 'Your First Aura Run' : 'Build Your Crew'}</h1>
+          <p className="product-entry__genre">Your first run</p>
+          <h1>{step === 'create' || step === 'debut' ? 'Your First Game' : 'Build Your Crew'}</h1>
         </div>
         <Button variant="ghost" onClick={onComplete}>Finish Later</Button>
       </div>
@@ -346,7 +347,7 @@ export function CrewOnboardingPage({
           {step === 'create' ? <>
             <p>Turn one photo into your own playable character. Your first Rookie is included.</p>
             <Button variant="primary" size="lg" onClick={onCreateFighter}>Create My Rookie</Button>
-            {!onboarding.trialComplete && onPlayTrial ? <Button variant="ghost" onClick={onPlayTrial}>Try Aura First</Button> : null}
+            {!onboarding.trialComplete && onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
           </> : null}
           {step === 'debut' ? <>
             <p>Play one Aura match as {target.name}. Then bring your friends into the Crew.</p>
@@ -455,7 +456,7 @@ export function CrewOnboardingPage({
           <p className="product-entry__pricing-context">Your first run</p>
           <dl>
             <div>
-              <dt>1 · Learn Aura <span>Play the guided trial</span></dt>
+              <dt>1 · Try a game <span>Choose Aura or Fight · play solo</span></dt>
               <dd>{onboarding?.trialComplete ? 'Done' : 'Optional'}</dd>
             </div>
             <div>
