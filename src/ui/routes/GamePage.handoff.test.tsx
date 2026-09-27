@@ -102,8 +102,29 @@ const finishOpening = () => {
 };
 
 describe('combat cabinet start', () => {
+  it('records a Fight debut with the owned Rookie and leads to the Crew, retrying after a failed save', async () => {
+    const debut = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+    props.onDebutComplete = debut;
+    props.onContinueOnboarding = vi.fn();
+    await mount('FightScene', { gameMode: 'fight', vsAI: true, experience: 'onboarding', p1CloudFighterId: 'f'.repeat(32), p1Name: 'Mara' });
+    viewport.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } }));
+    flush(); await Promise.resolve(); await Promise.resolve(); flush();
+    expect(debut).toHaveBeenCalledExactlyOnceWith('f'.repeat(32));
+    const panel = find(node => node.props?.['aria-label'] === 'Debut complete');
+    expect(panel).toBeTruthy();
+    expect(find(node => node.props?.onClick === props.onContinueOnboarding, panel)).toBeTruthy();
+    expect(find(node => node.props?.['aria-label'] === 'Match complete actions')).toBeUndefined();
+    const retry = find(node => node.type === 'button' && node.props.children === 'Retry saving debut', panel);
+    expect(retry).toBeTruthy();
+    retry.props.onClick();
+    await Promise.resolve(); await Promise.resolve(); flush();
+    expect(debut).toHaveBeenCalledTimes(2);
+    expect(find(node => node.type === 'button' && node.props.children === 'Retry saving debut')).toBeUndefined();
+  });
   it.each([true, false])('records Fight trial completion only for a trial (trial=%s)', async trial => {
     vi.stubGlobal('localStorage', (viewport as any).localStorage);
+    props.onTryGame = vi.fn();
     await mount('FightScene', { gameMode: 'fight', vsAI: true, ...(trial ? { experience: 'trial' } : {}) });
     expect(localStorage.setItem).not.toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
     viewport.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
@@ -114,6 +135,10 @@ describe('combat cabinet start', () => {
       expect(localStorage.setItem).toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
       expect(find(node => node.props?.['aria-label'] === 'Free round complete')).toBeTruthy();
       expect(find(node => node.props?.onClick === props.onCreateFighter)).toBeTruthy();
+      const tryAura = find(node => node.type === 'button' && node.props.children === 'Try Aura');
+      expect(tryAura).toBeTruthy();
+      tryAura.props.onClick();
+      expect(props.onTryGame).toHaveBeenCalledWith('aura');
     } else {
       expect(localStorage.setItem).not.toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
     }
@@ -491,7 +516,7 @@ describe('GamePage Aura presentation handoff', () => {
 
   it('shows debut saving, offers retry on failure and keeps the Crew mission available', async () => {
     const save = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue(undefined);
-    props.onAuraDebutComplete = save;
+    props.onDebutComplete = save;
     props.onContinueOnboarding = vi.fn();
     props.authSessionKey = 'account-a';
     await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'onboarding', p1CloudFighterId: 'rookie-id' });
@@ -510,7 +535,7 @@ describe('GamePage Aura presentation handoff', () => {
 
   it('ignores a late debut save after the account changes', async () => {
     let saved!: () => void;
-    props.onAuraDebutComplete = vi.fn(() => new Promise<void>((resolve) => { saved = resolve; }));
+    props.onDebutComplete = vi.fn(() => new Promise<void>((resolve) => { saved = resolve; }));
     props.onContinueOnboarding = vi.fn();
     props.authSessionKey = 'account-a';
     await mount('AuraScene', { gameMode: 'aura', vsAI: true, experience: 'onboarding', p1CloudFighterId: 'rookie-id' });
