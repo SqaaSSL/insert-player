@@ -122,8 +122,21 @@ interface ProviderRequestCacheRow {
   response_status: number | null;
   response_content_type: string | null;
   owner_attempt_id: string;
+  job_id: string | null;
+  error_message: string | null;
   updated_at: string;
 }
+
+/**
+ * Marks an `uncertain` cache row whose proxy fetch rejected before any upstream
+ * response (connection or transport failure, not a timeout). A later claim from
+ * a manual continuation may take such a row over: it keeps the original owner
+ * attempt id, so the retry reuses the exact Meterkey idempotency key of the
+ * aborted dispatch and cannot be billed twice upstream.
+ */
+export const PROVIDER_DISPATCH_ABORTED_MESSAGE =
+  'Provider dispatch aborted before any upstream response; a manual continuation may retry it';
+const UPSTREAM_DISPATCH_HEADER = 'X-Insert-Player-Upstream-Dispatch';
 
 interface ProviderRequestCacheClaim {
   id: string;
@@ -495,7 +508,7 @@ async function beginProviderRequestCache(
   const requestPath = providerRequestPath(request);
   const stage = providerStageFromRequestKey(requestKey);
   const callKind = providerCallKind(request, route);
-  const ownerAttemptId = generateId();
+  let ownerAttemptId = generateId();
   const id = generateId();
   await env.DB.prepare(`
     INSERT OR IGNORE INTO provider_request_cache (
@@ -517,14 +530,14 @@ async function beginProviderRequestCache(
   let row = pixcliSubmission
     ? await env.DB.prepare(`
         SELECT id, status, response_blob_key, response_status, response_content_type,
-               owner_attempt_id, updated_at
+               owner_attempt_id, job_id, error_message, updated_at
         FROM provider_request_cache
         WHERE artifact_run_id = ? AND provider = 'pixcli' AND method = 'POST'
           AND request_path = ? AND request_key = ?
       `).bind(artifactRunId, requestPath, requestKey).first<ProviderRequestCacheRow>()
     : await env.DB.prepare(`
         SELECT id, status, response_blob_key, response_status, response_content_type,
-               owner_attempt_id, updated_at
+               owner_attempt_id, job_id, error_message, updated_at
         FROM provider_request_cache
         WHERE artifact_run_id = ? AND provider = ? AND method = ? AND request_path = ? AND request_hash = ?
       `).bind(artifactRunId, route.provider, request.method, requestPath, requestHash)
@@ -540,6 +553,28 @@ async function beginProviderRequestCache(
       WHERE id = ?
     `).bind(row.id).first<{ status: ProviderRequestCacheRow['status'] }>();
     if (refreshed) row = { ...row, status: refreshed.status };
+  }
+
+  if (
+    row.status === 'uncertain' &&
+    !terminalOnUpstreamResponse &&
+    row.error_message === PROVIDER_DISPATCH_ABORTED_MESSAGE &&
+    row.owner_attempt_id !== ownerAttemptId &&
+    row.job_id !== jobId
+  ) {
+    // The aborted dispatch never received an upstream response. Let this claim
+    // adopt the original owner attempt (and therefore its Meterkey idempotency
+    // key) so a manual continuation can retry it instead of looping on 409.
+    const takeover = await env.DB.prepare(`
+      UPDATE provider_request_cache
+      SET status = 'pending', error_message = NULL, response_status = NULL, updated_at = datetime('now')
+      WHERE id = ? AND owner_attempt_id = ? AND status = 'uncertain'
+      RETURNING id
+    `).bind(row.id, row.owner_attempt_id).first<{ id: string }>();
+    if (takeover) {
+      ownerAttemptId = row.owner_attempt_id;
+      row = { ...row, status: 'pending', error_message: null, response_status: null };
+    }
   }
 
   if (row.status === 'uncertain') {
@@ -628,6 +663,9 @@ async function finalizeProviderRequestCache(
   if (!claim) return response;
 
   const unknownOutcome = response.headers.get('X-Insert-Player-Upstream-Outcome') === 'unknown';
+  const dispatchAborted = unknownOutcome
+    && !claim.terminalOnUpstreamResponse
+    && response.headers.get(UPSTREAM_DISPATCH_HEADER) === 'aborted';
   if (!response.ok && !(claim.terminalOnUpstreamResponse && !unknownOutcome)) {
     await env.DB.prepare(`
       UPDATE provider_request_cache
@@ -636,9 +674,11 @@ async function finalizeProviderRequestCache(
     `).bind(
       unknownOutcome ? 'uncertain' : 'failed',
       response.status,
-      unknownOutcome
-        ? 'Provider dispatch outcome is unknown; automatic replay is disabled'
-        : `Provider returned HTTP ${response.status}`,
+      dispatchAborted
+        ? PROVIDER_DISPATCH_ABORTED_MESSAGE
+        : unknownOutcome
+          ? 'Provider dispatch outcome is unknown; automatic replay is disabled'
+          : `Provider returned HTTP ${response.status}`,
       claim.id,
       claim.ownerAttemptId,
     ).run();
@@ -709,6 +749,8 @@ async function finalizeProviderRequestCache(
     response_status: response.status,
     response_content_type: contentType,
     owner_attempt_id: claim.ownerAttemptId,
+    job_id: claim.jobId,
+    error_message: null,
     updated_at: new Date().toISOString(),
   });
   if (!cached) {

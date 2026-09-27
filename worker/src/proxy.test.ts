@@ -705,7 +705,58 @@ describe('provider request proxy hardening', () => {
     const response = await proxyRequest(request, 'https://provider.example/model', {}, 8);
 
     expect(response.status).toBe(413);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('buffers a streamed provider body and forwards it with a fixed length', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => Response.json({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"a":'));
+          controller.enqueue(new TextEncoder().encode('1}'));
+          controller.close();
+        },
+      }),
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    const response = await proxyRequest(request, 'https://provider.example/model', {}, 64);
+
+    expect(response.status).toBe(200);
+    const init = fetchMock.mock.calls[0]?.[1];
+    expect(init?.body).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe('{"a":1}');
+  });
+
+  it('reports an aborted upstream fetch as an unknown, aborted dispatch and logs why', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Network connection lost')));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"prompt":"x"}',
+    });
+
+    const response = await proxyRequest(request, 'https://meter.example/google-ai-studio/model?key=secret', {}, 64);
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('unknown');
+    expect(response.headers.get('X-Insert-Player-Upstream-Dispatch')).toBe('aborted');
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [, detail] = errorSpy.mock.calls[0] as [string, Record<string, unknown>];
+    expect(detail).toMatchObject({
+      target: 'https://meter.example/google-ai-studio/model',
+      method: 'POST',
+      requestBytes: 14,
+      timedOut: false,
+      reason: 'TypeError: Network connection lost',
+    });
+    expect(JSON.stringify(detail)).not.toContain('secret');
+    errorSpy.mockRestore();
   });
 
   it('streams provider responses through a byte cap instead of buffering them', async () => {
