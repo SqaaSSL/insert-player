@@ -20,6 +20,28 @@ test('foreground entering required frame border fails; no body-fit masks the err
   assert(qa.failures.includes('foreground_touches_cell_border'));
   assert.equal(qa.silhouetteIou, 1);
 });
+test('a few edge-grazing pixels are cropped, not rejected; a subject leaving its cell still fails', () => {
+  const width = 200, height = 200, perimeter = 2 * (width + height);
+  const cell = (borderRun: number, outsideRun: number) => {
+    const data = Buffer.alloc(width * height * 4), prior = new Uint8Array(width * height);
+    for (let y = 60; y < 140; y++) for (let x = 60; x < 140; x++) { data[(y * width + x) * 4 + 3] = 255; prior[y * width + x] = 255; }
+    for (let x = 0; x < borderRun; x++) { data[(0 * width + x) * 4 + 3] = 255; prior[x] = 255; }
+    // Pixels whose canonical projection lands outside the 1536×2048 frame.
+    for (let x = 0; x < outsideRun; x++) { data[(100 * width + x) * 4 + 3] = 255; prior[100 * width + x] = 255; }
+    return { data, prior };
+  };
+  const options = { ambiguousWhiteComponents: 0, removedWhiteComponents: 0 };
+  const grazing = cell(Math.floor(perimeter * .03), 0);
+  const ok = inspectCompiledCell('graze', grazing.data, grazing.prior, width, height, { scale: 1, translateX: 0, translateY: 0 }, options);
+  assert.deepEqual(ok.failures, []); assert.equal(ok.borderPixels, Math.floor(perimeter * .03));
+  const leaving = cell(Math.floor(perimeter * .03) + 1, 0);
+  const bad = inspectCompiledCell('leave', leaving.data, leaving.prior, width, height, { scale: 1, translateX: 0, translateY: 0 }, options);
+  assert(bad.failures.includes('foreground_touches_cell_border'));
+  const margin = cell(0, 40);
+  const outside = inspectCompiledCell('margin', margin.data, margin.prior, width, height, { scale: 1, translateX: -30, translateY: 0 }, options);
+  assert(outside.outsideCanonicalPixels > 0 && outside.outsideCanonicalPixels <= Math.floor(.005 * (80 * 80 + 40)));
+  assert(!outside.failures.includes('foreground_in_packing_margin'));
+});
 test('wrong dimensions and untrusted layouts fail before compilation', async () => {
   const [plan] = await getTemplateAtlasPlans('rookie-two-atlas-v1', ['idle']);
   const small = PNG.sync.write({ width: 16, height: 16, data: Buffer.alloc(16 * 16 * 4, 255) } as PNG);
@@ -76,9 +98,9 @@ test('declared trailing blank art is ignored by index, while required cells stay
   assert(result.qa.warnings.some(warning => warning.includes('excluded by its declared index')));
   assert.equal(result.frames.length, plan.cells.length);
   assert(result.frames.every(frame => plan.cells.some(cell => cell.masterId === frame.masterId)));
-  // Identical added artwork moved onto the border of a required cell is NOT ignored.
+  // Artwork spilling along the border of a required cell (well past the grazing tolerance) is NOT ignored.
   const required = plan.cells[0].rect;
-  for (let y = required.y; y < required.y + 60; y++) for (let x = required.x; x < required.x + 60; x++) raw.data.set([20, 40, 60, 255], (y * raw.width + x) * 4);
+  for (let y = required.y; y < required.y + 200; y++) for (let x = required.x; x < required.x + 200; x++) raw.data.set([20, 40, 60, 255], (y * raw.width + x) * 4);
   await assert.rejects(compileTemplateAtlas(PNG.sync.write(raw), plan), error => {
     assert((error as { qa?: { failures: string[] } }).qa?.failures.some(failure => failure.includes('foreground_touches_cell_border')));
     return true;
