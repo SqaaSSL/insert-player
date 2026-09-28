@@ -7,8 +7,12 @@ import { assertTrustedTemplatePlan, pngSha256, readTemplateMaster, TEMPLATE_REGI
 import { priorAgreement, refineWhite, whiteKey } from './whiteKey.ts';
 
 export const TEMPLATE_ATLAS_QA_POLICY = Object.freeze({
-  version: 'template-atlas-geometric-qa-v2', alphaVisible: 16, minimumAreaRatio: .005,
-  maximumAreaRatio: .75, minimumSilhouetteIou: .70, minimumLargestComponentRatio: .70,
+  version: 'template-atlas-geometric-qa-v3', alphaVisible: 16, minimumAreaRatio: .005,
+  // v2 required IoU ≥ .70 and rejected two correct KO frames (prone, falling forward)
+  // at .67 and .65: thin horizontal silhouettes lose IoU to a few pixels of vertical
+  // offset. Across a real 66-cell atlas the median IoU was .85 and p10 .82; a wrong
+  // pose (standing where the template lies down) scores far below .60.
+  maximumAreaRatio: .75, minimumSilhouetteIou: .60, minimumLargestComponentRatio: .70,
   blankForegroundWarningRatio: .001, trailingBlankPolicy: 'ignore-by-declared-index-with-warning',
   // v1 was zero-tolerance and rejected an otherwise correct KO frame whose fingertips
   // grazed the cell edge (53 of 1,990 perimeter pixels, 8 of ~20,000 visible pixels
