@@ -52,9 +52,9 @@ describe('Crew onboarding presentation', () => {
     const markup = renderToStaticMarkup(<CrewOnboardingPage {...baseProps} />);
 
     expect(markup).toContain('product-entry');
-    expect(markup).toContain('Aura onboarding');
-    expect(markup).toContain('Your First Aura Run');
-    expect(markup).toContain('1 · Learn Aura');
+    expect(markup).toContain('Your first run');
+    expect(markup).toContain('Your First Game');
+    expect(markup).toContain('1 · Try a game');
     expect(markup).toContain('2 · Create your Rookie');
     expect(markup).toContain('3 · Aura debut');
     expect(markup).toContain('4 · Build a Crew');
@@ -90,8 +90,10 @@ describe('Crew onboarding presentation', () => {
       />,
     );
 
-    expect(markup).toContain('Your First Aura Run');
-    expect(markup).toContain('Try Aura First');
+    expect(markup).toContain('Your First Game');
+    expect(markup).toContain('Try Aura');
+    expect(markup).toContain('Try Fight');
+    expect(markup).not.toContain('Try Rush');
     expect(markup).toContain('Sign In To Continue');
     expect(markup).toContain('Create a Crew · Invite Player Two · Choose one shared stage together');
   });

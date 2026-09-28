@@ -21,6 +21,7 @@ import {
 } from '../../services/CharacterPipeline.ts';
 import { FighterPreviewColumn, useFighterPreview } from '../components/FighterPreviewColumn.tsx';
 import { Button } from '../components/Button.tsx';
+import { TrialGameChoice, type TrialGameMode } from '../components/TrialGameChoice.tsx';
 import { PipelineProgress } from '../components/PipelineProgress.tsx';
 import { TurnstileChallenge } from '../components/TurnstileChallenge.tsx';
 import { GenerationConsent } from '../components/LegalConsent.tsx';
@@ -79,7 +80,7 @@ interface CreateFighterPageProps {
   authStatus: AuthStatus;
   authSessionKey: string;
   authSlot?: ReactNode;
-  onPlayTrial?: () => void;
+  onPlayTrial?: (mode: TrialGameMode) => void | Promise<void>;
   completionLabel?: string;
   onBack: () => void;
   onComplete: (photoHash: string) => void;
@@ -1114,7 +1115,7 @@ export function CreateFighterPage({
         <p>Sign in or join, then add your photo and name. Your character works in Aura, Fight and Rush and stays in your account.</p>
         <p className="creation-price-summary">First Rookie included if your account has not used it. After that, Rookie costs {quoteGenerationPackage('rookie', 'complete').creditCost} credits.</p>
         {authSlot ?? <p className="tier-picker__note">Character creation needs a live account. You can still play a free battle here.</p>}
-        {onPlayTrial ? <Button variant="secondary" onClick={onPlayTrial}>Play a free battle</Button> : null}
+        {onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
       </div>
     </section>;
   }

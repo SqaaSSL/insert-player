@@ -131,7 +131,7 @@ const PENDING_DEBUT_PREFIX = 'asf:onboarding:pending-debut:';
 const PROGRESS_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
 const progressSyncs = new Map<string, Promise<void>>();
 
-export function rememberCompletedAuraTrial(): void {
+export function rememberCompletedTrial(): void {
   try { localStorage.setItem(TRIAL_COMPLETED_KEY, String(Date.now())); } catch { /* optional recovery */ }
 }
 

@@ -65,6 +65,8 @@ Target WCAG 2.2 AA for shipped product surfaces. Preserve keyboard access for co
 
 ## Product entry and purchases
 
+- Generic “Try first” onboarding offers Aura or Fight with ready-made characters, free and solo. Rush stays in the arcade rather than this first choice. Completing either trial counts toward onboarding; a new sign-up enters the choice instead of automatically launching Aura. Game-specific landing buttons keep their named game.
+
 - The first solo Aura battle starts with four optional, unscored practice notes on the real lanes; the music, score and recording start with the actual duel. Contextual tips explain real points and alternating turns, and completion or dismissal is remembered on the device.
 - New public creation starts with sign-in, one photo and a name, then Rookie or Champion quality. Both create the complete 20-animation character: 13 Fight + Rush moves and seven Aura moves. Any first-Rookie entitlement and subsequent credit price come from the server; authorization rejects a changed quote.
 - Before new creation or its credit-purchase handoff, users explicitly answer whether the photo depicts a famous person. Yes shows a provider-rejection and credit-risk notice but does not change providers, prices or permission requirements. This is a user declaration, not face recognition. Only the answer is retained in the account-scoped device draft; consent is never restored. Existing paid jobs retain their recovery path without this new question.

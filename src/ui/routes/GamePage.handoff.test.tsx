@@ -36,7 +36,7 @@ vi.mock('react', async importOriginal => ({
 }));
 vi.mock('../../game/createGame.ts', () => ({ createGame: runtime.create }));
 vi.mock('../../services/DebugLog.ts', () => ({ debugInfo: vi.fn(), debugWarn: vi.fn() }));
-vi.mock('../../services/MatchReporting.ts', () => ({ reportMatchCompletion: vi.fn() }));
+vi.mock('../../services/MatchReporting.ts', () => ({ reportMatchCompletion: vi.fn().mockResolvedValue(undefined) }));
 
 import { AURA_CAPTURE_EVENT } from '../../game/aura/AuraCapture.ts';
 import { BATTLE_CAPTURE_EVENT } from '../../game/match/BattleCapture.ts';
@@ -47,7 +47,7 @@ import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AuraStartReady } from '../components/AuraStartReady.tsx';
 import { CombatStartReady } from '../components/CombatStartReady.tsx';
 import { FightControlsHint } from '../components/FightControlsHint.tsx';
-import { MATCH_START_EVENT } from '../../game/match/MatchConfig.ts';
+import { MATCH_START_EVENT, MATCH_COMPLETE_EVENT } from '../../game/match/MatchConfig.ts';
 import { AURA_ONBOARDING_EVENT } from '../../game/aura/AuraOnboarding.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT } from '../../game/aura/AuraStartup.ts';
 import { AURA_BATTLE_COMPLETE_EVENT, AURA_INPUT_EVENT, MATCH_ACTIONS_VISIBILITY_EVENT } from '../../game/match/MatchConfig.ts';
@@ -102,6 +102,22 @@ const finishOpening = () => {
 };
 
 describe('combat cabinet start', () => {
+  it.each([true, false])('records Fight trial completion only for a trial (trial=%s)', async trial => {
+    vi.stubGlobal('localStorage', (viewport as any).localStorage);
+    await mount('FightScene', { gameMode: 'fight', vsAI: true, ...(trial ? { experience: 'trial' } : {}) });
+    expect(localStorage.setItem).not.toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
+    viewport.dispatchEvent(new CustomEvent(MATCH_COMPLETE_EVENT, { detail: { winnerSlot: 'p1' } }));
+    viewport.dispatchEvent(new CustomEvent(MATCH_ACTIONS_VISIBILITY_EVENT, { detail: { visible: true } }));
+    flush();
+    expect(props.onComplete).toHaveBeenCalledTimes(1);
+    if (trial) {
+      expect(localStorage.setItem).toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
+      expect(find(node => node.props?.['aria-label'] === 'Free round complete')).toBeTruthy();
+      expect(find(node => node.props?.onClick === props.onCreateFighter)).toBeTruthy();
+    } else {
+      expect(localStorage.setItem).not.toHaveBeenCalledWith('asf:onboarding:trial-completed', expect.any(String));
+    }
+  });
   it.each(['FightScene', 'RushScene'])('keeps controls visible and waits for Play on every %s match', async sceneKey => {
     const combatStarts: unknown[] = [];
     viewport.addEventListener(MATCH_START_EVENT, event => combatStarts.push((event as CustomEvent).detail));
@@ -146,6 +162,7 @@ beforeEach(() => {
   viewport = Object.assign(new EventTarget(), {
     innerWidth: 390, innerHeight: 844,
     matchMedia: () => ({ matches: false }),
+    requestAnimationFrame: vi.fn(), cancelAnimationFrame: vi.fn(),
     setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout,
     location: { search: '' },
     localStorage: { getItem: vi.fn().mockReturnValue(null), setItem: vi.fn() },

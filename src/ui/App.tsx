@@ -421,7 +421,6 @@ export function App({
     && onboardingSnapshot?.account === authSessionKey
     && onboardingSnapshot.crewId === (activeCrew?.id ?? null)
       ? onboardingSnapshot.status : null;
-  const [postSignUpTrialRequested, setPostSignUpTrialRequested] = useState(false);
   const creationPurchaseIntent = useMemo(
     () => route === '/credits' || route === '/menu' ? readCreationPurchaseIntent(authSessionKey) : null,
     [authSessionKey, route],
@@ -620,17 +619,8 @@ export function App({
       debugInfo('[Onboarding] Ignored a stale sign-up trial intent for an existing account');
       return;
     }
-    setPostSignUpTrialRequested(true);
-    if (route !== '/') navigate('/', '', { replace: true });
+    navigate('/onboarding', '', { replace: true });
   }, [authStatus, isNewAccount, navigate, route]);
-
-  useEffect(() => {
-    if (!postSignUpTrialRequested || authStatus !== 'signed-in' || route !== '/') return;
-    setPostSignUpTrialRequested(false);
-    void tryGame('aura').catch((error: unknown) => {
-      debugWarn('[Onboarding] Aura trial could not start:', error instanceof Error ? error.message : error);
-    });
-  }, [authStatus, postSignUpTrialRequested, route, tryGame]);
 
   const finishFight = useCallback(() => {
     trackProductEvent('game_completed', { game: pendingMatch?.gameMode ?? 'fight', source: pendingMatch?.auraChallenge ? 'challenge'
@@ -881,7 +871,7 @@ export function App({
           fighterPhotoHash={params.get('player')}
           onCreateCrew={onCreateCrew}
           onSelectCrew={onSelectCrew}
-          onPlayTrial={() => void tryGame('aura')}
+          onPlayTrial={tryGame}
           onPlayDebut={(photoHash) => navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString())}
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',
@@ -942,7 +932,7 @@ export function App({
         <CreateFighterPage
           key={authSessionKey}
           authSlot={authSlot}
-          onPlayTrial={() => void tryGame('aura')}
+          onPlayTrial={tryGame}
           authStatus={authStatus}
           authSessionKey={authSessionKey}
           completionLabel={!creationContext.challenge && creationContext.tier === 'rookie'

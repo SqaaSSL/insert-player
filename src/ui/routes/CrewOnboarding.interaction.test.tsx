@@ -44,6 +44,7 @@ vi.mock('../../services/ProductEvents.ts', () => ({ trackProductEvent: vi.fn() }
 import { CrewJoinPage } from './CrewJoinPage.tsx';
 import { CrewOnboardingPage } from './CrewOnboardingPage.tsx';
 import { Button } from '../components/Button.tsx';
+import { TrialGameChoice } from '../components/TrialGameChoice.tsx';
 import {
   acceptCrewInviteLink, createCrewInviteLink, loadOnboardingStatus, loadReferralLanding,
   shareFighterWithActiveCrew, syncOnboardingProgress, type OnboardingStatus, type ReferralLanding,
@@ -78,9 +79,9 @@ let shareWindow: { opener: unknown; location: { replace: ReturnType<typeof vi.fn
 
 function find(predicate: (node: any) => boolean, node: any = tree): any {
   if (!node) return;
-  if (Array.isArray(node)) return node.map((child) => find(predicate, child)).find(Boolean);
+  if (Array.isArray(node)) return node.map((child) => find(predicate, child ?? null)).find(Boolean);
   if (typeof node !== 'object') return;
-  return predicate(node) ? node : find(predicate, node.props?.children);
+  return predicate(node) ? node : find(predicate, node.props?.children ?? null);
 }
 function textContent(node: any = tree): string {
   if (node == null || typeof node === 'boolean') return '';
@@ -209,6 +210,19 @@ describe('Crew invitation async interactions', () => {
 describe('Crew mission async interactions', () => {
   beforeEach(() => { renderPage = () => CrewOnboardingPage(onboardingProps); });
 
+  it.each(['signed-out', 'signed-in'] as const)('passes the chosen game through onboarding for %s players', async authStatus => {
+    onboardingProps.authStatus = authStatus;
+    vi.mocked(loadOnboardingStatus).mockResolvedValue({
+      ...completedStatus, fighter: null, trialComplete: false, debutComplete: false,
+      complete: false, recommendedStep: 'create',
+    });
+    flush(); await settle();
+    const choice = find(node => node.type === TrialGameChoice);
+    expect(choice).toBeTruthy();
+    await choice.props.onPlay('fight');
+    expect(onboardingProps.onPlayTrial).toHaveBeenCalledWith('fight');
+  });
+
   it('keeps WhatsApp available after completion and refreshes an expired or claimed cached link before sharing', async () => {
     const staleLink = { ...freshLink, id: 'old-link', expiresAt: '2020-01-01', url: 'https://insertplayer.ai/join?referral=old' };
     vi.mocked(loadOnboardingStatus).mockResolvedValue({ ...completedStatus, pendingInvite: staleLink });
@@ -259,7 +273,7 @@ describe('Crew mission async interactions', () => {
     flush(); await settle();
     expect(textContent()).toContain('Loading your next mission…');
     expect(button('Play My Aura Debut')).toBeUndefined();
-    expect(progress('1 · Learn Aura')).not.toBe('Done');
+    expect(progress('1 · Try a game')).not.toBe('Done');
     expect(progress('3 · Aura debut')).not.toBe('Done');
     status.resolve({
       ...completedStatus, trialComplete: false, debutComplete: false, sharedWithActiveCrew: false,
@@ -267,7 +281,7 @@ describe('Crew mission async interactions', () => {
       crewStageState: 'available', recommendedStep: 'debut', complete: false,
     });
     await settle();
-    expect(progress('1 · Learn Aura')).toBe('Optional');
+    expect(progress('1 · Try a game')).toBe('Optional');
     expect(progress('2 · Create your Rookie')).toBe('Done');
     expect(progress('3 · Aura debut')).toBe('Next');
     expect(progress('4 · Build a Crew')).not.toBe('Done');
@@ -287,5 +301,36 @@ describe('Crew mission async interactions', () => {
     button('Retry Progress').props.onClick(); await settle();
     expect(button('Enter Insert Player')).toBeTruthy();
     expect(loadOnboardingStatus).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('First game choice interactions', () => {
+  it.each(['aura', 'fight'] as const)('starts the selected %s trial once while launch is pending', async mode => {
+    const launch = deferred<void>();
+    const play = vi.fn(() => launch.promise);
+    renderPage = () => TrialGameChoice({ onPlay: play });
+    flush();
+    const selected = button(mode === 'aura' ? 'Try Aura' : 'Try Fight');
+    selected.props.onClick();
+    selected.props.onClick();
+    flush();
+    expect(play).toHaveBeenCalledExactlyOnceWith(mode);
+    expect(button('Try Aura').props.disabled).toBe(true);
+    expect(button('Try Fight').props.disabled).toBe(true);
+    expect(textContent()).toContain(`Preparing ${mode === 'aura' ? 'Aura' : 'Fight'}…`);
+    launch.resolve(); await settle();
+    expect(button('Try Fight').props.disabled).toBe(false);
+  });
+
+  it('recovers from a failed launch and allows choosing the other game', async () => {
+    const play = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(undefined);
+    renderPage = () => TrialGameChoice({ onPlay: play });
+    flush();
+    button('Try Fight').props.onClick(); await settle();
+    expect(textContent()).toContain('The game could not start. Please try again.');
+    expect(button('Try Aura').props.disabled).toBe(false);
+    button('Try Aura').props.onClick(); await settle();
+    expect(play.mock.calls).toEqual([['fight'], ['aura']]);
+    expect(textContent()).not.toContain('The game could not start');
   });
 });

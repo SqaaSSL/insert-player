@@ -1,0 +1,29 @@
+@reference "../styles.css";
+
+.trial-game-choice {
+  @apply my-5;
+}
+.trial-game-choice__intro {
+  @apply mb-3 mt-0 text-sm font-semibold text-asf-text;
+}
+.trial-game-choice__options {
+  @apply grid grid-cols-2 gap-4;
+}
+.trial-game-choice__options > div {
+  @apply min-w-0;
+}
+.trial-game-choice__options .asf-btn {
+  @apply min-h-12 w-full px-3 text-[10px];
+}
+.trial-game-choice__options p,
+.trial-game-choice__hint {
+  @apply mb-0 mt-2 text-sm leading-relaxed text-asf-muted;
+}
+.trial-game-choice__hint {
+  @apply mt-3 text-xs;
+}
+@media (max-width: 380px) {
+  .trial-game-choice__options {
+    @apply grid-cols-1;
+  }
+}

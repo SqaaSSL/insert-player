@@ -50,7 +50,7 @@ import { AuraStartReady } from '../components/AuraStartReady.tsx';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
-import { rememberCompletedAuraTrial } from '../../services/Crews.ts';
+import { rememberCompletedTrial } from '../../services/Crews.ts';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
 import {
@@ -390,7 +390,7 @@ export function GamePage({
   useEffect(() => {
     if (!isAura) return;
     const onAuraComplete = (event: WindowEventMap[typeof AURA_BATTLE_COMPLETE_EVENT]) => {
-      if (trial) rememberCompletedAuraTrial();
+      if (trial) rememberCompletedTrial();
       onComplete();
       setAuraSummary(event.detail);
       setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
@@ -617,6 +617,7 @@ export function GamePage({
 
   useEffect(() => {
     const onMatchComplete = (event: WindowEventMap[typeof MATCH_COMPLETE_EVENT]) => {
+      if (trial && !isAura && !isRush) rememberCompletedTrial();
       onComplete();
       setWinnerSlot(event.detail.winnerSlot);
       setMatchSummary(event.detail);
@@ -631,7 +632,7 @@ export function GamePage({
     return () => {
       window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
     };
-  }, [onComplete, ladder]);
+  }, [onComplete, ladder, trial, isAura, isRush]);
 
   useEffect(() => {
     const onVisibilityChange = (
