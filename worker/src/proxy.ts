@@ -10,9 +10,10 @@ import {
   requireUnmeteredProviderSession,
 } from './providerSessions';
 import {
-  createBoundedRequestStream,
+  bufferRequestBody,
   InvalidJsonBodyError,
   readJsonBody,
+  readRequestBytes,
   RequestBodyTooLargeError,
 } from './requestBody';
 import { createBoundedByteStream, ResponseBodyTooLargeError } from './streamLimits';
@@ -329,6 +330,33 @@ export function buildGeminiProxyTarget(
   return { transport: status.transport, targetUrl: target.toString(), headers: {} };
 }
 
+/**
+ * Set on proxy failures that never produced an upstream response. `aborted`
+ * means the fetch itself rejected (connection/transport failure); `timed-out`
+ * means the request was in flight when the proxy deadline passed.
+ */
+export const UPSTREAM_DISPATCH_HEADER = 'X-Insert-Player-Upstream-Dispatch';
+
+function loggableProxyTarget(targetUrl: string): string {
+  try {
+    const url = new URL(targetUrl);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return 'invalid-target';
+  }
+}
+
+async function bufferProviderRequest(request: Request, maxBytes: number): Promise<Request | Response> {
+  try {
+    return await bufferRequestBody(request, maxBytes);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      return Response.json({ error: 'Provider request body is too large' }, { status: 413 });
+    }
+    throw error;
+  }
+}
+
 export async function proxyRequest(
   request: Request,
   targetUrl: string,
@@ -342,14 +370,18 @@ export async function proxyRequest(
   const contentType = request.headers.get('Content-Type');
   if (contentType) headers.set('Content-Type', contentType);
 
-  let boundedRequest;
-  try {
-    boundedRequest = createBoundedRequestStream(request, maxRequestBytes);
-  } catch (error) {
-    if (error instanceof RequestBodyTooLargeError) {
-      return Response.json({ error: 'Provider request body is too large' }, { status: 413 });
+  // Buffer the (bounded) body and send it with a known length. A chunked
+  // multi-megabyte stream to the Meterkey Worker failed before any response.
+  let requestBody: Uint8Array | undefined;
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    try {
+      requestBody = await readRequestBytes(request, maxRequestBytes);
+    } catch (error) {
+      if (error instanceof RequestBodyTooLargeError) {
+        return Response.json({ error: 'Provider request body is too large' }, { status: 413 });
+      }
+      throw error;
     }
-    throw error;
   }
 
   const signal = AbortSignal.timeout(PROVIDER_FETCH_TIMEOUT_MS);
@@ -358,19 +390,27 @@ export async function proxyRequest(
     upstream = await fetch(targetUrl, {
       method: request.method,
       headers,
-      body: request.method === 'GET' || request.method === 'HEAD' ? undefined : boundedRequest.body,
+      body: requestBody,
       signal,
       redirect,
     });
   } catch (error) {
-    if (boundedRequest.didExceedLimit() || error instanceof RequestBodyTooLargeError) {
-      return Response.json({ error: 'Provider request body is too large' }, { status: 413 });
-    }
+    const timedOut = signal.aborted;
+    console.error('[proxy] Upstream fetch failed before any response', {
+      target: loggableProxyTarget(targetUrl),
+      method: request.method,
+      requestBytes: requestBody?.byteLength ?? 0,
+      timedOut,
+      reason: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    });
     return Response.json(
-      { error: signal.aborted ? 'Provider request timed out' : 'Provider request failed' },
+      { error: timedOut ? 'Provider request timed out' : 'Provider request failed' },
       {
-        status: signal.aborted ? 504 : 502,
-        headers: { 'X-Insert-Player-Upstream-Outcome': 'unknown' },
+        status: timedOut ? 504 : 502,
+        headers: {
+          'X-Insert-Player-Upstream-Outcome': 'unknown',
+          [UPSTREAM_DISPATCH_HEADER]: timedOut ? 'timed-out' : 'aborted',
+        },
       },
     );
   }
@@ -775,6 +815,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/ludo')) {
     const allowlistError = enforceProviderRouteAllowlist('ludo', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedLudoRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.ludo);
+    if (bufferedLudoRequest instanceof Response) return bufferedLudoRequest;
+    request = bufferedLudoRequest;
     if (!env.LUDO_API_KEY) return missingKey('LUDO_API_KEY');
     if (path === '/proxy/ludo/assets/sprites/results' && !url.searchParams.get('request_id')?.trim()) {
       return Response.json({ error: 'request_id is required' }, { status: 400 });
@@ -801,6 +844,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/freepik')) {
     const allowlistError = enforceProviderRouteAllowlist('freepik', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedFreepikRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.freepik);
+    if (bufferedFreepikRequest instanceof Response) return bufferedFreepikRequest;
+    request = bufferedFreepikRequest;
     if (!env.FREEPIK_API_KEY) return missingKey('FREEPIK_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:default', auth);
     if (limited) return limited;
@@ -824,6 +870,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/gemini')) {
     const allowlistError = enforceProviderRouteAllowlist('gemini', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedGeminiRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.gemini);
+    if (bufferedGeminiRequest instanceof Response) return bufferedGeminiRequest;
+    request = bufferedGeminiRequest;
     const transport = geminiTransportStatus(env);
     if (templateRenderer && transport.transport !== 'meterkey') {
       return Response.json({ error: 'Template source generation requires the configured Meterkey transport' }, { status: 503 });
@@ -866,6 +915,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/runway')) {
     const allowlistError = enforceProviderRouteAllowlist('runway', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedRunwayRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.runway);
+    if (bufferedRunwayRequest instanceof Response) return bufferedRunwayRequest;
+    request = bufferedRunwayRequest;
     if (!env.RUNWAY_API_KEY) return missingKey('RUNWAY_API_KEY');
     const limited = await enforceRateLimit(env, 'proxy:default', auth);
     if (limited) return limited;
@@ -892,6 +944,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/fal')) {
     const allowlistError = enforceProviderRouteAllowlist('fal', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedFalRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.fal);
+    if (bufferedFalRequest instanceof Response) return bufferedFalRequest;
+    request = bufferedFalRequest;
     const isNanoBanana = path.startsWith('/proxy/fal/fal-ai/nano-banana-2/');
     const isTemplateBackgroundRemoval = Boolean(templateRenderer) && path.startsWith('/proxy/fal/fal-ai/birefnet');
     if (isNanoBanana || isTemplateBackgroundRemoval) {
@@ -953,6 +1008,9 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
   if (path.startsWith('/proxy/pixcli')) {
     const allowlistError = enforceProviderRouteAllowlist('pixcli', path, request.method);
     if (allowlistError) return allowlistError;
+    const bufferedPixcliRequest = await bufferProviderRequest(request, PROVIDER_REQUEST_BODY_LIMITS.pixcli);
+    if (bufferedPixcliRequest instanceof Response) return bufferedPixcliRequest;
+    request = bufferedPixcliRequest;
     if (url.search) {
       return Response.json({ error: 'PixCLI proxy query parameters are not allowed' }, { status: 400 });
     }

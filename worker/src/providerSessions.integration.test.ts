@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createProviderRequestState,
   finalizeProviderRequest,
+  PROVIDER_DISPATCH_ABORTED_MESSAGE,
   PROVIDER_SESSION_HEADER,
   requireProviderSession,
   requireUnmeteredProviderSession,
@@ -1288,6 +1289,96 @@ describe('durable provider request cache against D1 and R2', () => {
       });
     } finally {
 		vi.unstubAllGlobals();
+      await mf.dispose();
+    }
+  }, 15_000);
+
+  it('lets a manual continuation retry an aborted dispatch with the original idempotency key', async () => {
+    const { mf, db, env } = await bindings();
+    try {
+      const state = createProviderRequestState();
+      const requestKey = `job:${JOB_ID}:sprite:low_punch`;
+      const firstRequest = providerRequest(requestKey, 'aborted dispatch');
+      expect(await requireProviderSession(firstRequest, env, auth, ROUTE, state)).toBeNull();
+      const originalAttemptKey = state.upstreamAttemptKey;
+      expect(originalAttemptKey).toMatch(/^ip:/);
+
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Network connection lost')));
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const aborted = await proxyRequest(
+        firstRequest,
+        'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3.1-flash-image:generateContent',
+        { Authorization: 'Bearer mk-test' },
+        1024 * 1024,
+      );
+      errorSpy.mockRestore();
+      expect(aborted.status).toBe(502);
+      expect(aborted.headers.get('X-Insert-Player-Upstream-Dispatch')).toBe('aborted');
+      expect((await finalizeProviderRequest(env, aborted, state)).status).toBe(502);
+      expect(await db.prepare('SELECT status, error_message FROM provider_request_cache').first()).toEqual({
+        status: 'uncertain',
+        error_message: PROVIDER_DISPATCH_ABORTED_MESSAGE,
+      });
+
+      // The same job never replays it automatically.
+      const sameJob = await requireProviderSession(
+        providerRequest(requestKey, 'aborted dispatch'),
+        env,
+        auth,
+        ROUTE,
+        createProviderRequestState(),
+      );
+      expect(sameJob?.status).toBe(409);
+
+      await db.batch([
+        db.prepare(`
+          INSERT INTO generation_charges (id, user_id, tier, status, reason)
+          VALUES (?, ?, 'rookie', 'reserved', 'fighter_generation')
+        `).bind(CONTINUATION_CHARGE_ID, USER_ID),
+        db.prepare(`
+          INSERT INTO provider_sessions (
+            id, user_id, rate_limit_key, tier, purpose, charge_id, status,
+            provider_call_limit, provider_cost_limit_cents, expires_at
+          ) VALUES (?, ?, ?, 'rookie', 'fighter_generation', ?, 'active', 48, 300, datetime('now', '+2 days'))
+        `).bind(CONTINUATION_SESSION_ID, USER_ID, `user:${USER_ID}`, CONTINUATION_CHARGE_ID),
+        db.prepare(`
+          INSERT INTO generation_jobs (id, user_id, provider_session_id, artifact_run_id, status)
+          VALUES (?, ?, ?, ?, 'running')
+        `).bind(CONTINUATION_JOB_ID, USER_ID, CONTINUATION_SESSION_ID, JOB_ID),
+      ]);
+      const continuationAuth: PublicAuthContext = {
+        ...auth,
+        claims: { generation_job_id: CONTINUATION_JOB_ID },
+      };
+      const retryState = createProviderRequestState();
+      expect(await requireProviderSession(
+        providerRequest(requestKey, 'aborted dispatch', CONTINUATION_SESSION_ID),
+        env,
+        continuationAuth,
+        ROUTE,
+        retryState,
+      )).toBeNull();
+      expect(retryState.upstreamAttemptKey).toBe(originalAttemptKey);
+      expect(await db.prepare('SELECT status, error_message FROM provider_request_cache').first()).toEqual({
+        status: 'pending',
+        error_message: null,
+      });
+
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ candidates: [{ result: 'retried-frame' }] })));
+      const retried = await proxyRequest(
+        providerRequest(requestKey, 'aborted dispatch', CONTINUATION_SESSION_ID),
+        'https://meter.hilo.cx/google-ai-studio/v1beta/models/gemini-3.1-flash-image:generateContent',
+        { Authorization: 'Bearer mk-test' },
+        1024 * 1024,
+        32 * 1024 * 1024,
+        'meterkey',
+      );
+      const stored = await finalizeProviderRequest(env, retried, retryState);
+      expect(stored.status).toBe(200);
+      expect(await stored.json()).toEqual({ candidates: [{ result: 'retried-frame' }] });
+      expect((await db.prepare('SELECT status FROM provider_request_cache').first<{ status: string }>())?.status).toBe('succeeded');
+    } finally {
+      vi.unstubAllGlobals();
       await mf.dispose();
     }
   }, 15_000);
