@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   buildGeminiProxyTarget,
@@ -730,6 +733,43 @@ describe('provider request proxy hardening', () => {
     const init = fetchMock.mock.calls[0]?.[1];
     expect(init?.body).toBeInstanceOf(Uint8Array);
     expect(new TextDecoder().decode(init?.body as Uint8Array)).toBe('{"a":1}');
+  });
+
+  it('refuses a provider redirect for fail-closed callers without following it', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(null, {
+      status: 302,
+      headers: { Location: 'https://hilo.cx/' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const request = new Request('https://api.insertplayer.ai/proxy/gemini/model', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"prompt":"x"}',
+    });
+
+    const response = await proxyRequest(
+      request,
+      'https://meter.example/google-ai-studio/model',
+      {},
+      64,
+      32 * 1024 * 1024,
+      'meterkey',
+      'manual',
+    );
+
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe('manual');
+    expect(response.status).toBe(502);
+    expect(response.headers.get('X-Insert-Player-Upstream-Outcome')).toBe('not-dispatched');
+    expect(await response.json()).toMatchObject({ code: 'provider_request_not_dispatched' });
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    errorSpy.mockRestore();
+  });
+
+  it('never asks the runtime for the unsupported redirect: error mode', () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'proxy.ts'), 'utf8');
+    expect(source).not.toMatch(/redirect:\s*'error'/);
+    expect(source).not.toMatch(/\? 'error' : 'follow'/);
   });
 
   it('reports an aborted upstream fetch as an unknown, aborted dispatch and logs why', async () => {

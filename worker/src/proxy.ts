@@ -364,7 +364,9 @@ export async function proxyRequest(
   maxRequestBytes: number,
   maxResponseBytes = 32 * 1024 * 1024,
   upstreamOutcomePolicy: 'standard' | 'meterkey' = 'standard',
-  redirect: 'follow' | 'error' | 'manual' = 'follow',
+  // workerd rejects the "error" redirect mode with a TypeError before connecting,
+  // so a fail-closed caller must pass 'manual' and let the 3xx check below refuse it.
+  redirect: 'follow' | 'manual' = 'follow',
 ): Promise<Response> {
   const headers = new Headers(extraHeaders);
   const contentType = request.headers.get('Content-Type');
@@ -412,6 +414,25 @@ export async function proxyRequest(
           [UPSTREAM_DISPATCH_HEADER]: timedOut ? 'timed-out' : 'aborted',
         },
       },
+    );
+  }
+
+  if (
+    redirect === 'manual' && upstreamOutcomePolicy === 'meterkey' &&
+    upstream.status >= 300 && upstream.status < 400
+  ) {
+    // The provider answered with a redirect instead of processing the request.
+    // Nothing was dispatched to the model, so the caller may release its
+    // reservation and retry as new work.
+    console.error('[proxy] Upstream redirect refused', {
+      target: loggableProxyTarget(targetUrl),
+      status: upstream.status,
+      location: upstream.headers.get('Location') ? 'present' : 'absent',
+    });
+    await upstream.body?.cancel().catch(() => undefined);
+    return Response.json(
+      { error: 'Provider redirect is not allowed', code: 'provider_request_not_dispatched' },
+      { status: 502, headers: { 'X-Insert-Player-Upstream-Outcome': 'not-dispatched' } },
     );
   }
 
@@ -905,7 +926,7 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       PROVIDER_REQUEST_BODY_LIMITS.gemini,
       PROVIDER_RESPONSE_BODY_LIMITS.gemini,
       upstream.transport === 'meterkey' ? 'meterkey' : 'standard',
-      templateRenderer ? 'error' : 'follow',
+      templateRenderer ? 'manual' : 'follow',
     );
     const finalized = await finalizeProviderRequest(env, response, providerState);
     finalized.headers.set('X-Insert-Player-Gemini-Transport', upstream.transport);
@@ -967,7 +988,7 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       let response = await proxyRequest(request, target.toString(), {
         ...meterkeyGeminiHeaders(env.METERKEY_API_KEY, state.upstreamAttemptKey),
         'x-fal-no-retry': '1', 'cf-aig-skip-cache': 'true',
-      }, PROVIDER_REQUEST_BODY_LIMITS.fal, PROVIDER_RESPONSE_BODY_LIMITS.fal, 'meterkey', 'error');
+      }, PROVIDER_REQUEST_BODY_LIMITS.fal, PROVIDER_RESPONSE_BODY_LIMITS.fal, 'meterkey', 'manual');
       if (requestBodySha256 && response.ok) {
         // This extra receipt field is cached with the acknowledged FAL handle.
         // A semantic replay cannot mislabel an old result with new input hashes.
