@@ -984,9 +984,17 @@ export async function handleProxy(request: Request, env: Env, auth: PublicAuthCo
       if (sessionError) return sessionError;
       const requestBodySha256 = isNanoBanana && request.method === 'POST' ? await hashString(await request.clone().arrayBuffer()) : null;
       // New generations are pinned to Meterkey → FAL. No PixCLI or direct-key fallback.
-      const target = new URL(path.replace(/^\/proxy\/fal/, '/fal'), base);
+      // Meterkey's path form (`/fal/<endpoint>`) runs FAL synchronously and answers with
+      // the finished result, which is not the durable queue receipt the processor
+      // polls. Submissions therefore post to `/fal` naming the FAL queue endpoint as
+      // the target, exactly like the reviewed atlas experiments; status/result GETs
+      // keep the path form.
+      const falApiPath = path.replace(/^\/proxy\/fal/, '');
+      const isAtlasSubmission = isNanoBanana && request.method === 'POST';
+      const target = isAtlasSubmission ? new URL('/fal', base) : new URL(`/fal${falApiPath}`, base);
       let response = await proxyRequest(request, target.toString(), {
         ...meterkeyGeminiHeaders(env.METERKEY_API_KEY, state.upstreamAttemptKey),
+        ...(isAtlasSubmission ? { 'x-fal-target-url': `https://queue.fal.run${falApiPath}` } : {}),
         'x-fal-no-retry': '1', 'cf-aig-skip-cache': 'true',
       }, PROVIDER_REQUEST_BODY_LIMITS.fal, PROVIDER_RESPONSE_BODY_LIMITS.fal, 'meterkey', 'manual');
       if (requestBodySha256 && response.ok) {

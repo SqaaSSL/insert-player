@@ -216,12 +216,58 @@ async function submit(
     throw new TemplateAtlasRequestError('Atlas submission was not accepted with a verified receipt. No automatic retry.', response.status, code);
   }
   if (typeof data.request_id !== 'string' || !REQUEST_ID.test(data.request_id)) {
+    if (Array.isArray(data.images)) {
+      // The gateway ran the model synchronously and answered with the finished
+      // result instead of a queue handle. The output is already paid for, so verify
+      // that the receipt binds these exact input bytes and keep it.
+      if (data.insert_player_request_body_sha256 !== provenance.requestBodySha256) {
+        throw new TemplateAtlasRequestError('Atlas receipt does not verify these exact input bytes. Do not submit it again.', 409, 'provider_request_outcome_unknown');
+      }
+      const receipt: TemplateAtlasReceipt = {
+        requestId: `sync-${provenance.requestBodySha256}`, requestScope: body.requestScope, provenance,
+      };
+      try {
+        return await downloadAtlasResult(data, receipt, requestContext(body), dependencies);
+      } catch (error) {
+        if (error instanceof TemplateAtlasRequestError) throw error;
+        throw new TemplateAtlasRequestError('Atlas result is temporarily unavailable. Recover the cached receipt using GET only.', 503, 'provider_collection_failed', receipt.requestId);
+      }
+    }
     throw new TemplateAtlasRequestError('Atlas submission has no verified request ID. Do not submit it again.', 502, 'provider_request_outcome_unknown');
   }
   if (data.insert_player_request_body_sha256 !== provenance.requestBodySha256) {
     throw new TemplateAtlasRequestError('Atlas receipt does not verify these exact input bytes. Do not submit it again.', 409, 'provider_request_outcome_unknown', data.request_id);
   }
   return { status: 'submitted', receipt: { requestId: data.request_id, requestScope: body.requestScope, provenance } };
+}
+
+/** Validates a finished FAL result and returns its native PNG bytes as a completed atlas. */
+async function downloadAtlasResult(
+  result: Record<string, unknown>,
+  receipt: TemplateAtlasReceipt,
+  context: ReturnType<typeof requestContext>,
+  dependencies: TemplateAtlasProviderDependencies,
+): Promise<GenerateTemplateAtlasResult> {
+  if (!Array.isArray(result.images) || result.images.length !== 1 || !record(result.images[0])) {
+    throw new TemplateAtlasRequestError('Atlas result must contain exactly one native image.', 422, 'provider_result_invalid', receipt.requestId);
+  }
+  let url: string;
+  try { url = falImageUrl(result.images[0].url); }
+  catch { throw new TemplateAtlasRequestError('Atlas result contains an untrusted image URL.', 422, 'provider_result_invalid', receipt.requestId); }
+  const imageResponse = await dependencies.fetch(`/proxy/image?url=${encodeURIComponent(url)}`, { method: 'GET', signal: AbortSignal.timeout(45_000) }, context);
+  if (!imageResponse.ok) throw new Error('Provider image unavailable');
+  const bytes = Buffer.from(await imageResponse.arrayBuffer());
+  if (bytes.length < 24 || bytes.length > MAX_IMAGE_BYTES || !bytes.subarray(0, 8).equals(PNG)) {
+    throw new TemplateAtlasRequestError('Atlas result is not the requested native PNG.', 422, 'provider_result_invalid', receipt.requestId);
+  }
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  if (width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 32 * 1024 * 1024) {
+    throw new TemplateAtlasRequestError('Atlas image dimensions exceed safe limits.', 422, 'provider_result_invalid', receipt.requestId);
+  }
+  // Unexpected-but-safe dimensions are still checkpointed; compile alone rejects an invalid grid.
+  // Native provider bytes are returned intact; cleanup is a separate, inference-free endpoint.
+  return { status: 'completed', receipt, rawBase64: bytes.toString('base64'), sha256: sha256(bytes), width, height, mimeType: 'image/png' };
 }
 
 function validateReceipt(body: CollectTemplateAtlasRequest, plan: TemplateAtlasPlan): TemplateAtlasReceipt {
@@ -270,27 +316,7 @@ async function collect(
     }
     const resultResponse = await dependencies.fetch(base, { method: 'GET', signal: AbortSignal.timeout(30_000) }, context);
     if (!resultResponse.ok) throw new Error('Provider result unavailable');
-    const result = await jsonObject(resultResponse);
-    if (!Array.isArray(result.images) || result.images.length !== 1 || !record(result.images[0])) {
-      throw new TemplateAtlasRequestError('Atlas result must contain exactly one native image.', 422, 'provider_result_invalid', receipt.requestId);
-    }
-    let url: string;
-    try { url = falImageUrl(result.images[0].url); }
-    catch { throw new TemplateAtlasRequestError('Atlas result contains an untrusted image URL.', 422, 'provider_result_invalid', receipt.requestId); }
-    const imageResponse = await dependencies.fetch(`/proxy/image?url=${encodeURIComponent(url)}`, { method: 'GET', signal: AbortSignal.timeout(45_000) }, context);
-    if (!imageResponse.ok) throw new Error('Provider image unavailable');
-    const bytes = Buffer.from(await imageResponse.arrayBuffer());
-    if (bytes.length < 24 || bytes.length > MAX_IMAGE_BYTES || !bytes.subarray(0, 8).equals(PNG)) {
-      throw new TemplateAtlasRequestError('Atlas result is not the requested native PNG.', 422, 'provider_result_invalid', receipt.requestId);
-    }
-    const width = bytes.readUInt32BE(16);
-    const height = bytes.readUInt32BE(20);
-    if (width < 1 || height < 1 || width > 8192 || height > 8192 || width * height > 32 * 1024 * 1024) {
-      throw new TemplateAtlasRequestError('Atlas image dimensions exceed safe limits.', 422, 'provider_result_invalid', receipt.requestId);
-    }
-    // Unexpected-but-safe dimensions are still checkpointed; compile alone rejects an invalid grid.
-    // Native provider bytes are returned intact; cleanup is a separate, inference-free endpoint.
-    return { status: 'completed', receipt, rawBase64: bytes.toString('base64'), sha256: sha256(bytes), width, height, mimeType: 'image/png' };
+    return await downloadAtlasResult(await jsonObject(resultResponse), receipt, context, dependencies);
   } catch (error) {
     if (error instanceof TemplateAtlasRequestError) throw error;
     throw new TemplateAtlasRequestError('Atlas collection is temporarily unavailable. Recover this receipt using GET only.', 503, 'provider_collection_failed', receipt.requestId);
