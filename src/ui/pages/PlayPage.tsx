@@ -2,7 +2,7 @@ import type { FighterGameMode } from '../../services/FighterAssetPacks.ts';
 import type { OnboardingStatus } from '../../services/Crews.ts';
 import { Button } from '../components/Button.tsx';
 import { LaunchFilm } from '../components/LaunchFilm.tsx';
-import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, AuraRosterButton, type PlayGameHandler } from './GameLandingPage.tsx';
+import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, type PlayGameHandler } from './GameLandingPage.tsx';
 import './product-entry.css';
 
 export interface PlayPageProps {
@@ -16,6 +16,15 @@ export interface PlayPageProps {
   onContinueOnboarding?: () => void;
 }
 
+export function nextMissionTitle(status: Pick<OnboardingStatus, 'fighter' | 'debutComplete' | 'recommendedStep'>): string {
+  if (!status.fighter) return 'Create your own Rookie';
+  if (!status.debutComplete) return 'Make your debut';
+  if (status.recommendedStep === 'invite') return 'Bring in Player Two';
+  if (status.recommendedStep === 'stage') return 'Choose your Crew’s home stage';
+  return 'Build your Crew';
+}
+
+/** Play: Aura and Fight share the top row as equals; Rush stays available below. */
 export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding }: PlayPageProps) {
   return (
     <div className="product-entry product-entry--play">
@@ -25,40 +34,42 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
       </header>
 
       {onboardingStatus && !onboardingStatus.complete && onContinueOnboarding ? (
-        <section className="gallery-panel" aria-label="Next Aura mission">
+        <section className="gallery-panel" aria-label="Next mission">
           <p className="product-entry__genre">Next mission</p>
-          <h2>{!onboardingStatus.fighter ? 'Create your own Rookie' : !onboardingStatus.debutComplete ? 'Make your Aura debut' : onboardingStatus.recommendedStep === 'invite' ? 'Bring in Player Two' : onboardingStatus.recommendedStep === 'stage' ? 'Choose your Crew’s home stage' : 'Build your Crew'}</h2>
+          <h2>{nextMissionTitle(onboardingStatus)}</h2>
           <p>Pick up where you left off. Your progress is saved.</p>
           <Button onClick={onContinueOnboarding}>Continue My First Run</Button>
         </section>
       ) : null}
 
-      <section className="product-entry__hero product-entry__hero--gameplay-first" aria-labelledby="play-aura-title">
-        <header className="product-entry__hero-copy">
-          <h2 id="play-aura-title">Aura</h2>
-          <p className="product-entry__promise">Hit the beat. Win the crowd.</p>
-        </header>
-        <div className="product-entry__hero-art"><GameEntryPreview mode="aura" /></div>
-        <div className="product-entry__hero-actions">
-          <GameEntryPlayButton mode="aura" onPlay={onPlay} label="Play Aura" />
-          <p className="product-entry__play-hint">{GAME_ENTRY_CONTENT.aura.playHint}</p>
-          {onChooseCharacter ? <AuraRosterButton onChoose={onChooseCharacter} /> : null}
-          <button className="product-entry__text-link" type="button" onClick={() => onExplore('aura')}>Meet Aura →</button>
-        </div>
+      <section className="product-entry__duo" aria-label="Choose your game">
+        {(['aura', 'fight'] as const).map((mode) => (
+          <article className={`product-entry__duo-card product-entry__duo-card--${mode}`} key={mode} aria-labelledby={`play-${mode}-title`}>
+            <div className="product-entry__duo-art"><GameEntryPreview mode={mode} compact /></div>
+            <div className="product-entry__duo-copy">
+              <h2 id={`play-${mode}-title`}>{GAME_ENTRY_CONTENT[mode].name}</h2>
+              <p className="product-entry__promise">{mode === 'aura' ? 'Hit the beat. Win the crowd.' : 'Face a rival. Take the round.'}</p>
+              <GameEntryPlayButton mode={mode} onPlay={onPlay} />
+              <p className="product-entry__play-hint">{GAME_ENTRY_CONTENT[mode].playHint}</p>
+              <div className="product-entry__duo-links">
+                {mode === 'aura' && onChooseCharacter ? <button className="product-entry__text-link" type="button" onClick={onChooseCharacter}>Choose a character</button> : null}
+                <button className="product-entry__text-link" type="button" onClick={() => onExplore(mode)}>Explore {GAME_ENTRY_CONTENT[mode].name} →</button>
+              </div>
+            </div>
+          </article>
+        ))}
       </section>
 
       <section className="product-entry__game-list" aria-label="More games">
-        {(['fight', 'rush'] as const).map((mode) => (
-          <article className="product-entry__game-row" key={mode}>
-            <GameEntryPreview mode={mode} compact />
-            <div className="product-entry__game-row-copy">
-              <h2>{GAME_ENTRY_CONTENT[mode].name}</h2>
-              <p>{mode === 'fight' ? 'Face a rival. Take the round.' : 'Clear the street with a CPU ally.'}</p>
-              <button className="product-entry__text-link" type="button" onClick={() => onExplore(mode)}>Explore {GAME_ENTRY_CONTENT[mode].name} →</button>
-            </div>
-            <GameEntryPlayButton mode={mode} onPlay={onPlay} />
-          </article>
-        ))}
+        <article className="product-entry__game-row">
+          <GameEntryPreview mode="rush" compact />
+          <div className="product-entry__game-row-copy">
+            <h2>{GAME_ENTRY_CONTENT.rush.name}</h2>
+            <p>Clear the street with a CPU ally.</p>
+            <button className="product-entry__text-link" type="button" onClick={() => onExplore('rush')}>Explore {GAME_ENTRY_CONTENT.rush.name} →</button>
+          </div>
+          <GameEntryPlayButton mode="rush" onPlay={onPlay} />
+        </article>
       </section>
 
       <LaunchFilm />

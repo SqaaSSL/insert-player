@@ -272,9 +272,10 @@ describe('Crew mission async interactions', () => {
     vi.mocked(loadOnboardingStatus).mockReturnValue(status.promise);
     flush(); await settle();
     expect(textContent()).toContain('Loading your next mission…');
-    expect(button('Play My Aura Debut')).toBeUndefined();
+    expect(button('Debut in Aura')).toBeUndefined();
+    expect(button('Debut in Fight')).toBeUndefined();
     expect(progress('1 · Try a game')).not.toBe('Done');
-    expect(progress('3 · Aura debut')).not.toBe('Done');
+    expect(progress('3 · Debut')).not.toBe('Done');
     status.resolve({
       ...completedStatus, trialComplete: false, debutComplete: false, sharedWithActiveCrew: false,
       invitesSent: 0, invitesAccepted: 0, crewStage: null, crewStageReady: false,
@@ -283,12 +284,14 @@ describe('Crew mission async interactions', () => {
     await settle();
     expect(progress('1 · Try a game')).toBe('Optional');
     expect(progress('2 · Create your Rookie')).toBe('Done');
-    expect(progress('3 · Aura debut')).toBe('Next');
+    expect(progress('3 · Debut')).toBe('Next');
     expect(progress('4 · Build a Crew')).not.toBe('Done');
     expect(progress('5 · Invite Player Two')).not.toBe('Done');
     expect(progress('6 · Choose a home stage')).not.toBe('Done');
-    button('Play My Aura Debut').props.onClick();
-    expect(onboardingProps.onPlayDebut).toHaveBeenCalledWith('player-photo');
+    button('Debut in Fight').props.onClick();
+    expect(onboardingProps.onPlayDebut).toHaveBeenCalledWith('player-photo', 'fight');
+    button('Debut in Aura').props.onClick();
+    expect(onboardingProps.onPlayDebut).toHaveBeenLastCalledWith('player-photo', 'aura');
     expect(syncOnboardingProgress).toHaveBeenCalledWith('player-session');
   });
 

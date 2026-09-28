@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fightExitRoute, gameRouteForMatch, normalizeRoute, shouldGuideCreatedRookieDebut } from './App';
+import { debutDestination, debutSearch, fightExitRoute, gameRouteForMatch, normalizeRoute, shouldGuideCreatedRookieDebut } from './App';
 
 describe('App route normalization', () => {
   it('preserves valid direct routes', () => {
@@ -76,5 +76,22 @@ describe('first Rookie creation handoff', () => {
     expect(shouldGuideCreatedRookieDebut(creation, status, 'new-champion-photo')).toBe(false);
     expect(shouldGuideCreatedRookieDebut(creation, { ...status, fighter: null }, 'rookie-photo')).toBe(false);
     expect(shouldGuideCreatedRookieDebut(creation, null, 'rookie-photo')).toBe(false);
+  });
+});
+
+describe('debut destination', () => {
+  it('debuts in the game the player already chose and offers a choice otherwise', () => {
+    expect(debutDestination('aura')).toBe('/roster/aura');
+    expect(debutDestination('fight')).toBe('/roster/cpu');
+    expect(debutDestination('arcade')).toBe('/roster/cpu');
+    expect(debutDestination('gallery')).toBe('/onboarding');
+    expect(debutDestination('rush')).toBe('/onboarding');
+    expect(debutDestination(null)).toBe('/onboarding');
+  });
+
+  it('auto-starts only real match setups and hands the mission page just the character', () => {
+    expect(debutSearch('/roster/aura', 'abc')).toBe('player=abc&onboarding=debut');
+    expect(debutSearch('/roster/cpu', 'abc')).toBe('player=abc&onboarding=debut');
+    expect(debutSearch('/onboarding', 'abc')).toBe('player=abc');
   });
 });

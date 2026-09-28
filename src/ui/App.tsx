@@ -1,7 +1,9 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { HomePage } from './routes/HomePage.tsx';
 import { PlayPage } from './pages/PlayPage.tsx';
+import { FirstRunPage } from './pages/FirstRunPage.tsx';
 import { GameLandingPage } from './pages/GameLandingPage.tsx';
+import type { TrialGameMode } from './components/TrialGameChoice.tsx';
 import { BattlesPage } from './pages/BattlesPage.tsx';
 import { BattleWatchPage } from './pages/BattleWatchPage.tsx';
 import { isBattleId } from '../services/BattleFinishers.ts';
@@ -168,6 +170,22 @@ export function shouldGuideCreatedRookieDebut(
   return !creation.challenge
     && Boolean(onboarding && !onboarding.debutComplete && !onboarding.complete
       && onboarding.fighter?.photoHash === photoHash);
+}
+
+/** The first match with an owned Rookie happens in the game the player already chose;
+ * with no game chosen yet, the mission page offers Aura or Fight. */
+export function debutDestination(
+  target: TrialGameMode | CreationNavigationContext['returnTo'] | null | undefined,
+): '/roster/aura' | '/roster/cpu' | '/onboarding' {
+  if (target === 'aura') return '/roster/aura';
+  if (target === 'fight' || target === 'arcade') return '/roster/cpu';
+  return '/onboarding';
+}
+
+export function debutSearch(destination: ReturnType<typeof debutDestination>, photoHash: string): string {
+  return new URLSearchParams(destination === '/onboarding'
+    ? { player: photoHash }
+    : { player: photoHash, onboarding: 'debut' }).toString();
 }
 
 export function legalReturnRouteFromState(state: unknown): AppRoute {
@@ -791,7 +809,11 @@ export function App({
         />
       );
     }
-    if ((route === '/' && !readLastGame(authSessionKey) && !onboardingStatus) || route.startsWith('/games/')) {
+    if (route === '/' && !readLastGame(authSessionKey) && !onboardingStatus) {
+      return <FirstRunPage onPlay={tryGame} onExplore={(game) => navigate(`/games/${game}`)} onSignIn={onSignIn}
+        onSkip={() => navigate('/fighters/new', buildCreationSearch({ tier: 'rookie', creationPackage: 'complete', source: 'landing' }))} />;
+    }
+    if (route.startsWith('/games/')) {
       const mode: FighterGameMode = route === '/games/fight' ? 'fight' : route === '/games/rush' ? 'rush' : 'aura';
       return <GameLandingPage mode={mode} onPlay={tryGame} onCreate={createForGame} onExplore={(game) => navigate(`/games/${game}`)}
         onChooseCharacter={mode === 'aura' ? () => navigate('/roster/aura') : undefined}
@@ -872,7 +894,7 @@ export function App({
           onCreateCrew={onCreateCrew}
           onSelectCrew={onSelectCrew}
           onPlayTrial={tryGame}
-          onPlayDebut={(photoHash) => navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString())}
+          onPlayDebut={(photoHash, mode) => navigate(debutDestination(mode), debutSearch(debutDestination(mode), photoHash))}
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',
           }))}
@@ -937,7 +959,7 @@ export function App({
           authSessionKey={authSessionKey}
           completionLabel={!creationContext.challenge && creationContext.tier === 'rookie'
             && onboardingStatus && !onboardingStatus.debutComplete && !onboardingStatus.complete
-            ? 'Make My Aura Debut'
+            ? 'Make My Debut'
             : creationContext.challenge ? 'Return to challenge' : creationContext.returnTo === 'gallery' ? 'Open my characters' : `Play ${creationContext.returnTo === 'arcade' ? 'Fight' : creationContext.returnTo}`}
           onBack={() => creationContext.challenge
             ? navigate('/challenge', new URLSearchParams({ challenge: creationContext.challenge }).toString())
@@ -958,7 +980,8 @@ export function App({
               if (current.authSessionKey !== navigation.authSessionKey || current.route !== navigation.route
                 || current.routeSearch !== navigation.routeSearch) return;
               if (shouldGuideCreatedRookieDebut(creationContext, status, photoHash)) {
-                navigate('/roster/aura', new URLSearchParams({ player: photoHash, onboarding: 'debut' }).toString());
+                const debut = debutDestination(creationContext.returnTo);
+                navigate(debut, debutSearch(debut, photoHash));
               } else navigate(destination, destination === '/gallery' ? '' : buildArcadeSelectionSearch(photoHash));
             })();
           }}
@@ -1055,7 +1078,8 @@ export function App({
           ...(pendingMatch.p1CloudFighterId ? { fighter: pendingMatch.p1CloudFighterId } : {}),
           ...(pendingMatch.p1PhotoHash ? { player: pendingMatch.p1PhotoHash } : {}),
         }).toString())}
-        onAuraDebutComplete={(fighterId) => recordDebutWithRecovery(fighterId, authSessionKey)}
+        onDebutComplete={(fighterId) => recordDebutWithRecovery(fighterId, authSessionKey)}
+        onTryGame={tryGame}
         onOpenArcade={() => leaveFight('/arcade')}
         ladder={ladderContext}
       />

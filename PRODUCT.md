@@ -65,7 +65,8 @@ Target WCAG 2.2 AA for shipped product surfaces. Preserve keyboard access for co
 
 ## Product entry and purchases
 
-- Generic “Try first” onboarding offers Aura or Fight with ready-made characters, free and solo. Rush stays in the arcade rather than this first choice. Completing either trial counts toward onboarding; a new sign-up enters the choice instead of automatically launching Aura. Game-specific landing buttons keep their named game.
+- A first visit to `/` shows Aura and Fight side by side with real gameplay previews: play a free solo demo of either with ready-made characters, or skip straight to creating a character. The same choice appears on `/onboarding` for guests and at the character-creation sign-in checkpoint. Rush stays in the arcade rather than this first choice. Completing either demo counts toward onboarding; a new sign-up enters the choice instead of automatically launching Aura. Game-specific landings at `/games/*` keep their named game.
+- The debut (first match with an owned Rookie) happens in Aura or Fight. Creation that started from a game returns to that game's debut; creation that started without a game offers both from the mission page. Play lists Aura and Fight as equal cards, Rush below.
 
 - The first solo Aura battle starts with four optional, unscored practice notes on the real lanes; the music, score and recording start with the actual duel. Contextual tips explain real points and alternating turns, and completion or dismissal is remembered on the device.
 - New public creation starts with sign-in, one photo and a name, then Rookie or Champion quality. Both create the complete 20-animation character: 13 Fight + Rush moves and seven Aura moves. Any first-Rookie entitlement and subsequent credit price come from the server; authorization rejects a changed quote.

@@ -169,6 +169,68 @@
 .product-entry__error {
   @apply mb-0 mt-3 max-w-[44ch] break-words text-sm text-asf-warn;
 }
+/* First run: the two headline games as equals, before any account or upload. */
+.first-run__hero {
+  @apply rounded-[6px] border border-asf-line bg-asf-bg-1 px-6 pb-6 pt-8;
+}
+.first-run__hero h1 {
+  @apply mb-0 mt-0 text-[clamp(28px,4vw,48px)] leading-[1.15] tracking-normal text-asf-gold [text-wrap:balance];
+}
+.first-run__hero .product-entry__promise {
+  @apply max-w-[62ch] text-lg font-medium text-asf-text [text-wrap:pretty];
+}
+.first-run__hero .trial-game-choice {
+  @apply mb-0 mt-6;
+}
+
+/* Guest onboarding: plain steps instead of mission jargon. */
+.product-entry__steps {
+  @apply my-0 list-none space-y-3 p-0 text-sm leading-relaxed text-asf-muted;
+}
+.product-entry__steps li {
+  @apply grid grid-cols-[auto_minmax(0,1fr)] gap-x-3;
+  counter-increment: first-run-step;
+}
+.product-entry__steps li::before {
+  content: counter(first-run-step, decimal-leading-zero);
+  @apply text-xs font-semibold leading-relaxed text-asf-gold;
+}
+.product-entry__identity > .gallery-panel {
+  @apply self-start;
+}
+.product-entry__steps li > span {
+  @apply min-w-0;
+}
+.product-entry__steps strong {
+  @apply text-asf-text;
+}
+
+/* Play: Aura and Fight side by side with the same weight. */
+.product-entry__duo {
+  @apply grid grid-cols-2 gap-5;
+}
+.product-entry__duo-card {
+  @apply flex min-w-0 flex-col overflow-hidden rounded-[6px] border border-asf-line bg-asf-bg-1;
+}
+.product-entry__duo-art .product-entry__preview.is-compact {
+  @apply aspect-[16/9] h-auto min-h-0 rounded-none;
+}
+.product-entry__duo-copy {
+  @apply flex flex-1 flex-col px-5 pb-5 pt-4;
+}
+.product-entry__duo-copy h2 {
+  @apply mb-0 mt-0 text-[clamp(24px,3vw,36px)] leading-[1.2] text-asf-gold;
+}
+.product-entry__duo-copy .product-entry__promise {
+  @apply mb-4 mt-2 text-lg;
+}
+.product-entry__duo-copy .product-entry__play-action .asf-btn {
+  @apply w-full;
+}
+.product-entry__duo-links {
+  @apply mt-1 flex flex-wrap gap-x-5;
+}
+
 @media (max-width: 780px) {
   .product-entry {
     @apply pt-2;
@@ -227,6 +289,15 @@
   }
   .product-entry__identity {
     @apply grid-cols-1 gap-6;
+  }
+  .product-entry__duo {
+    @apply grid-cols-1 gap-4;
+  }
+  .first-run__hero {
+    @apply px-4 pb-4 pt-5;
+  }
+  .first-run__hero .product-entry__promise {
+    @apply text-base;
   }
   .product-entry__collection p,
   .product-entry__other-games > span {

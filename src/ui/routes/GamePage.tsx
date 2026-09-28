@@ -51,6 +51,7 @@ import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnb
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
 import { rememberCompletedTrial } from '../../services/Crews.ts';
+import type { TrialGameMode } from '../components/TrialGameChoice.tsx';
 import { AURA_CAPTURE_EVENT, type AuraCaptureDetail } from '../../game/aura/AuraCapture.ts';
 import { AURA_STARTUP_EVENT, AURA_STARTUP_READY_EVENT, isAuraStartupDetail, type AuraStartupDetail } from '../../game/aura/AuraStartup.ts';
 import {
@@ -91,8 +92,11 @@ interface GamePageProps extends Partial<AuthRouteState> {
   onComplete: () => void;
   onExit: () => void;
   onCreateFighter: () => void;
+  /** Starts the other game's free demo from a finished demo. */
+  onTryGame?: (mode: TrialGameMode) => void | Promise<void>;
   onContinueOnboarding?: () => void;
-  onAuraDebutComplete?: (fighterId: string) => Promise<void>;
+  /** Records the first match with an owned Rookie, in Aura or Fight. */
+  onDebutComplete?: (fighterId: string) => Promise<void>;
   onOpenArcade: () => void;
   ladder?: LadderContext | null;
 }
@@ -122,8 +126,9 @@ export function GamePage({
   onComplete,
   onExit,
   onCreateFighter,
+  onTryGame,
   onContinueOnboarding,
-  onAuraDebutComplete,
+  onDebutComplete,
   onOpenArcade,
   ladder,
   authStatus = 'local',
@@ -185,24 +190,24 @@ export function GamePage({
     return () => { debutSaveEpochRef.current += 1; };
   }, [authSessionKey, launchTarget]);
 
-  const saveAuraDebut = async () => {
+  const saveDebut = async () => {
     const fighterId = launchTarget.data.p1CloudFighterId;
     if (!onboardingDebut) return;
-    if (!fighterId || !onAuraDebutComplete) {
+    if (!fighterId || !onDebutComplete) {
       setDebutSaveState('error');
       return;
     }
     const epoch = ++debutSaveEpochRef.current;
     setDebutSaveState('saving');
     try {
-      await onAuraDebutComplete(fighterId);
+      await onDebutComplete(fighterId);
       if (debutSaveEpochRef.current === epoch && debutSessionRef.current === authSessionKey) {
         setDebutSaveState('saved');
       }
     } catch (error) {
       if (debutSaveEpochRef.current !== epoch || debutSessionRef.current !== authSessionKey) return;
       setDebutSaveState('error');
-      debugWarn('[Onboarding] Aura debut will retry:', error instanceof Error ? error.message : error);
+      debugWarn('[Onboarding] Debut will retry:', error instanceof Error ? error.message : error);
     }
   };
   useEffect(() => {
@@ -394,11 +399,11 @@ export function GamePage({
       onComplete();
       setAuraSummary(event.detail);
       setWinnerSlot(event.detail.winnerSlot === 'draw' ? null : event.detail.winnerSlot);
-      if (onboardingDebut) void saveAuraDebut();
+      if (onboardingDebut) void saveDebut();
     };
     window.addEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
     return () => window.removeEventListener(AURA_BATTLE_COMPLETE_EVENT, onAuraComplete);
-  }, [isAura, launchTarget, onAuraDebutComplete, onComplete, onboardingDebut, trial, authSessionKey]);
+  }, [isAura, launchTarget, onDebutComplete, onComplete, onboardingDebut, trial, authSessionKey]);
 
   useEffect(() => {
     if (!import.meta.env.DEV || !isRush) return;
@@ -621,6 +626,7 @@ export function GamePage({
       onComplete();
       setWinnerSlot(event.detail.winnerSlot);
       setMatchSummary(event.detail);
+      if (onboardingDebut && !isAura && !isRush) void saveDebut();
       if (ladder && event.detail.winnerSlot === 'p1' && !ladder.isFinal) {
         ladder.onPrefetchNext();
       }
@@ -632,7 +638,7 @@ export function GamePage({
     return () => {
       window.removeEventListener(MATCH_COMPLETE_EVENT, onMatchComplete);
     };
-  }, [onComplete, ladder, trial, isAura, isRush]);
+  }, [onComplete, ladder, trial, isAura, isRush, onboardingDebut, onDebutComplete, launchTarget, authSessionKey]);
 
   useEffect(() => {
     const onVisibilityChange = (
@@ -919,6 +925,11 @@ export function GamePage({
           >
             Create My Fighter
           </button>
+          {onTryGame ? (
+            <button type="button" className="match-actions__button" onClick={() => void onTryGame('aura')}>
+              Try Aura
+            </button>
+          ) : null}
           <button type="button" className="match-actions__button" onClick={() => chooseMatchAction('run_it_back')}>
             Play Again
           </button>
@@ -928,7 +939,35 @@ export function GamePage({
           {finisher}
         </div>
       )}
-      {matchActionsVisible && !isAura && !trial && !online && (!ladder || winnerSlot === null) && (
+      {matchActionsVisible && !isAura && !isRush && onboardingDebut && !online && (
+        <div className="match-actions match-actions--trial" role="group" aria-label="Debut complete">
+          <span className="match-actions__eyebrow">Debut complete</span>
+          <span className="match-actions__label">
+            {winnerSlot === 'p1' ? `${trialPlayerName} wins the debut.` : `${trialPlayerName} is on the roster.`}
+          </span>
+          <span className="match-actions__copy">
+            {debutSaveState === 'saving' ? 'Saving your debut…'
+              : debutSaveState === 'error' ? 'Your debut has not synced yet. Retry now or continue to your Crew to try again.'
+              : 'Your Rookie is ready. Build a Crew so your friends can play it too.'}
+          </span>
+          {debutSaveState === 'error' ? (
+            <button type="button" className="match-actions__button" onClick={() => void saveDebut()}>Retry saving debut</button>
+          ) : null}
+          {onContinueOnboarding ? (
+            <button type="button" className="match-actions__button match-actions__button--primary" onClick={onContinueOnboarding}>
+              Build My Crew
+            </button>
+          ) : null}
+          <button type="button" className="match-actions__button" onClick={() => chooseMatchAction('run_it_back')}>
+            Run It Back
+          </button>
+          <button type="button" className="match-actions__button" onClick={() => chooseMatchAction('menu')}>
+            Menu
+          </button>
+          {finisher}
+        </div>
+      )}
+      {matchActionsVisible && !isAura && !trial && !onboardingDebut && !online && (!ladder || winnerSlot === null) && (
         <div className="match-actions" role="group" aria-label="Match complete actions">
           <span className="match-actions__label">Match Complete</span>
           <button
@@ -977,9 +1016,10 @@ export function GamePage({
           battle={savedBattle} onBattleChange={updateSavedBattle}
           trial={trial}
           onCreatePlayer={onCreateFighter}
+          onTryOtherGame={trial && onTryGame ? () => void onTryGame('fight') : undefined}
           onBuildCrew={onboardingDebut ? onContinueOnboarding : undefined}
           debutSaveState={debutSaveState}
-          onRetryDebut={() => void saveAuraDebut()}
+          onRetryDebut={() => void saveDebut()}
           capture={auraCapture}
           localSlot={online?.localSlot}
           onlineRematch={online ? onlineRematch : undefined}

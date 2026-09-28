@@ -30,7 +30,7 @@ interface CrewOnboardingPageProps {
   onSelectCrew?: (organizationId: string) => Promise<void>;
   onCreateFighter: () => void;
   onPlayTrial?: (mode: TrialGameMode) => void | Promise<void>;
-  onPlayDebut?: (photoHash: string) => void;
+  onPlayDebut?: (photoHash: string, mode: TrialGameMode) => void;
   onCreateStage: () => void;
   onSignIn?: () => void;
   onComplete: () => void;
@@ -306,13 +306,18 @@ export function CrewOnboardingPage({
         <section className="product-entry__identity">
           <div className="product-entry__identity-copy">
             <h1>Your First Game</h1>
-            <p>Try Aura or Fight, create your own Rookie, then bring your friends and choose a home stage together.</p>
-            {onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
+            <p>Try Aura or Fight with ready-made characters, create your own Rookie, then bring your friends and choose a home stage together.</p>
+            {onPlayTrial ? <TrialGameChoice showPreviews onPlay={onPlayTrial} onSkip={onCreateFighter} /> : null}
             {onSignIn ? <Button variant={onPlayTrial ? 'ghost' : 'primary'} onClick={onSignIn}>Sign In To Continue</Button> : authSlot}
           </div>
           <div className="gallery-panel">
-            <h2>Next Mission</h2>
-            <p className="roster-hero__copy">Create a Crew · Invite Player Two · Choose one shared stage together</p>
+            <h2>How it works</h2>
+            <ol className="product-entry__steps">
+              <li><span><strong>Try a game.</strong> Aura or Fight, free, with ready-made characters.</span></li>
+              <li><span><strong>Insert yourself.</strong> One photo and a name become your own playable character.</span></li>
+              <li><span><strong>Play it anywhere.</strong> The same character works in Aura, Fight and Rush.</span></li>
+              <li><span><strong>Bring friends.</strong> Share it with your Crew and pick a home stage together.</span></li>
+            </ol>
           </div>
         </section>
       </div>
@@ -350,8 +355,13 @@ export function CrewOnboardingPage({
             {!onboarding.trialComplete && onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
           </> : null}
           {step === 'debut' ? <>
-            <p>Play one Aura match as {target.name}. Then bring your friends into the Crew.</p>
-            {target.photoHash && onPlayDebut ? <Button variant="primary" size="lg" onClick={() => onPlayDebut(target.photoHash!)}>Play My Aura Debut</Button> : <Button onClick={onComplete}>Choose My Character</Button>}
+            <p>Play one match as {target.name} in Aura or Fight. Then bring your friends into the Crew.</p>
+            {target.photoHash && onPlayDebut ? (
+              <div className="gallery-actions" aria-label="Choose your debut game">
+                <Button variant="primary" size="lg" onClick={() => onPlayDebut(target.photoHash!, 'aura')}>Debut in Aura</Button>
+                <Button variant="primary" size="lg" onClick={() => onPlayDebut(target.photoHash!, 'fight')}>Debut in Fight</Button>
+              </div>
+            ) : <Button onClick={onComplete}>Choose My Character</Button>}
           </> : null}
           {step === 'crew' ? (
             <>
@@ -464,7 +474,7 @@ export function CrewOnboardingPage({
               <dd>{target.id || target.photoHash ? 'Done' : 'Next'}</dd>
             </div>
             <div>
-              <dt>3 · Aura debut <span>Play once as your own character</span></dt>
+              <dt>3 · Debut <span>Play once as your own character · Aura or Fight</span></dt>
               <dd>{onboarding?.debutComplete ? 'Done' : target.id || target.photoHash ? 'Next' : 'Locked'}</dd>
             </div>
             <div>

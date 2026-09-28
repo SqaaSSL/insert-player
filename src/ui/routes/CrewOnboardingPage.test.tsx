@@ -56,7 +56,7 @@ describe('Crew onboarding presentation', () => {
     expect(markup).toContain('Your First Game');
     expect(markup).toContain('1 · Try a game');
     expect(markup).toContain('2 · Create your Rookie');
-    expect(markup).toContain('3 · Aura debut');
+    expect(markup).toContain('3 · Debut');
     expect(markup).toContain('4 · Build a Crew');
     expect(markup).toContain('5 · Invite Player Two');
     expect(markup).toContain('6 · Choose a home stage');
@@ -94,8 +94,11 @@ describe('Crew onboarding presentation', () => {
     expect(markup).toContain('Try Aura');
     expect(markup).toContain('Try Fight');
     expect(markup).not.toContain('Try Rush');
+    expect(markup).toContain('Skip the demo · Create my character');
     expect(markup).toContain('Sign In To Continue');
-    expect(markup).toContain('Create a Crew · Invite Player Two · Choose one shared stage together');
+    expect(markup).toContain('How it works');
+    expect(markup).toContain('Try a game.');
+    expect(markup).not.toContain('Next Mission');
   });
 
   it('resumes the real create or debut checkpoint instead of pretending they are done', () => {

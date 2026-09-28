@@ -9,18 +9,41 @@
 .trial-game-choice__options {
   @apply grid grid-cols-2 gap-4;
 }
-.trial-game-choice__options > div {
+.trial-game-choice__option {
   @apply min-w-0;
 }
 .trial-game-choice__options .asf-btn {
   @apply min-h-12 w-full px-3 text-[10px];
 }
-.trial-game-choice__options p,
+.trial-game-choice__option p,
 .trial-game-choice__hint {
   @apply mb-0 mt-2 text-sm leading-relaxed text-asf-muted;
 }
 .trial-game-choice__hint {
   @apply mt-3 text-xs;
+}
+.trial-game-choice__skip {
+  @apply mt-3 inline-flex min-h-11 cursor-pointer items-center gap-2 rounded-[3px] border-0 bg-transparent px-1 py-2 text-sm font-medium leading-relaxed text-asf-gold underline decoration-asf-line-strong underline-offset-4 transition-colors duration-150 hover:text-asf-gold-bright hover:decoration-asf-gold focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-gold disabled:cursor-default disabled:opacity-60;
+}
+
+/* Card layout: each game shows real gameplay before its button. */
+.trial-game-choice--cards .trial-game-choice__options {
+  @apply gap-5;
+}
+.trial-game-choice--cards .trial-game-choice__option {
+  @apply flex flex-col overflow-hidden rounded-[6px] border border-asf-line bg-asf-bg-1 p-3;
+}
+.trial-game-choice__preview {
+  @apply relative mb-3 min-w-0;
+}
+.trial-game-choice__preview .product-entry__preview.is-compact {
+  @apply aspect-[16/9] h-auto min-h-0 rounded-[4px];
+}
+.trial-game-choice__genre {
+  @apply pointer-events-none absolute left-2 top-2 rounded-[3px] bg-asf-bg-deep/85 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-asf-gold;
+}
+.trial-game-choice--cards .trial-game-choice__option p {
+  @apply text-sm;
 }
 @media (max-width: 380px) {
   .trial-game-choice__options {

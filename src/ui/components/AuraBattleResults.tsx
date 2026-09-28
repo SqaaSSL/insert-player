@@ -22,6 +22,8 @@ interface AuraBattleResultsProps {
   disableRematch?: boolean;
   onChallengeCreated?: (challenge: AuraChallenge) => void;
   onCreatePlayer?: () => void;
+  /** After a demo, the other free demo is one tap away so both games stay equal. */
+  onTryOtherGame?: () => void;
   onBuildCrew?: () => void;
   debutSaveState?: 'idle' | 'saving' | 'saved' | 'error';
   onRetryDebut?: () => void;
@@ -47,6 +49,7 @@ export function AuraBattleResults({
   disableRematch = false,
   onChallengeCreated,
   onCreatePlayer,
+  onTryOtherGame,
   onBuildCrew,
   debutSaveState = 'idle',
   onRetryDebut,
@@ -117,6 +120,9 @@ export function AuraBattleResults({
         <button type="button" className="asf-btn asf-btn--primary" onClick={onCreatePlayer}>
           Create My Free Rookie
         </button>
+        {onTryOtherGame ? (
+          <button type="button" className="asf-btn" onClick={onTryOtherGame}>Try Fight</button>
+        ) : null}
       </div>
     ) : null}
     {onBuildCrew ? (
