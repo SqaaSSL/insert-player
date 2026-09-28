@@ -681,6 +681,14 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
         if (error instanceof NonRetryableError) throw error;
         throw new NonRetryableError('Template submission response could not be verified (provider_request_outcome_unknown). No automatic retry; the run-scoped request remains available for recovery.');
       }
+      if (result.status === 'completed') {
+        // The gateway answered the submission with the finished atlas. Checkpoint it
+        // now so the collect loop restores it instead of polling a queue handle.
+        await saveTemplateAtlasReceipt(this.env, job, rendererVersion, planId, result.receipt);
+        await saveTemplateAtlasRaw(this.env, job, rendererVersion, planId, result.receipt,
+          base64ToArrayBuffer(result.rawBase64), result.sha256, result.width, result.height);
+        return result.receipt;
+      }
       if (result.status !== 'submitted') throw new NonRetryableError('Template submission did not return a durable receipt');
       await saveTemplateAtlasReceipt(this.env, job, rendererVersion, planId, result.receipt);
       return result.receipt;

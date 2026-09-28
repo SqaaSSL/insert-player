@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { apiFetch } from '../../../src/services/ApiClient.ts';
 import {
-  getTemplateAtlasPlanIds, TEMPLATE_ATLAS_ANIMATION_NAMES,
+  getTemplateAtlasPlanIds, TEMPLATE_ATLAS_ANIMATION_NAMES, TEMPLATE_ATLAS_MODEL,
   type SubmitTemplateAtlasRequest,
 } from '../../../src/services/TemplateAtlasContract.ts';
 import {
@@ -44,6 +44,25 @@ async function receipt() {
   assert.equal(result.status, 'submitted');
   return result.receipt;
 }
+
+test('keeps a synchronous gateway result as a completed atlas bound to the exact request bytes', async () => {
+  const native = fixturePng(12, 16);
+  const calls: string[] = [];
+  const result = await generateTemplateAtlas(body, deps(async (input, init) => {
+    calls.push(String(input));
+    if (String(input).startsWith('/proxy/image?url=')) return new Response(new Uint8Array(native), { headers: { 'Content-Type': 'image/png' } });
+    return json({ images: [{ url: 'https://v3b.fal.media/files/native.png' }], description: '', insert_player_request_body_sha256: sha256(String(init?.body)) });
+  }));
+  assert.equal(result.status, 'completed');
+  if (result.status !== 'completed') return;
+  assert.equal(result.sha256, sha256(native));
+  assert.equal(result.width, 12); assert.equal(result.height, 16);
+  assert.match(result.receipt.requestId, /^sync-[a-f0-9]{64}$/);
+  assert.equal(result.receipt.requestScope, body.requestScope);
+  assert.deepEqual(calls, [`/proxy/fal/${TEMPLATE_ATLAS_MODEL}`, `/proxy/image?url=${encodeURIComponent('https://v3b.fal.media/files/native.png')}`]);
+  await assert.rejects(generateTemplateAtlas(body, deps(async () => json({ images: [{ url: 'https://v3b.fal.media/files/native.png' }], insert_player_request_body_sha256: 'f'.repeat(64) }))),
+    (error: unknown) => error instanceof TemplateAtlasRequestError && error.status === 409);
+});
 
 test('Worker and processor use stable separate Rookie/Champion plan IDs', () => {
   assert.equal(TEMPLATE_ATLAS_ANIMATION_NAMES.length, 20);
