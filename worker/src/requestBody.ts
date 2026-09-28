@@ -128,6 +128,24 @@ export async function readRequestBytes(request: Request, maxBytes: number): Prom
   return bytes;
 }
 
+/**
+ * Reads a request body once into memory (bounded by `maxBytes`) and returns a
+ * request whose body is that byte array with a known Content-Length.
+ *
+ * Provider proxying previously teed the incoming network stream (one branch for
+ * the durable request hash, one for the upstream fetch) and forwarded it as a
+ * chunked stream. Worker-to-Worker dispatches with multi-megabyte chunked bodies
+ * failed before any upstream response, so provider bodies are now buffered once
+ * and sent with a fixed length.
+ */
+export async function bufferRequestBody(request: Request, maxBytes: number): Promise<Request> {
+  if (request.method === 'GET' || request.method === 'HEAD' || !request.body) return request;
+  const bytes = await readRequestBytes(request, maxBytes);
+  const headers = new Headers(request.headers);
+  headers.set('Content-Length', String(bytes.byteLength));
+  return new Request(request.url, { method: request.method, headers, body: bytes });
+}
+
 export async function readMultipartFormData(request: Request, maxBytes: number): Promise<FormData> {
   const contentType = request.headers.get('Content-Type') ?? '';
   if (!contentType.toLowerCase().startsWith('multipart/form-data;')) {
