@@ -327,7 +327,7 @@ describe('Template Atlas Meterkey routing against D1 and R2', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [target, init] = fetchMock.mock.calls[0]!;
       expect(target).toBe('https://meter.hilo.cx/fal/fal-ai/nano-banana-2/edit');
-      expect(init).toMatchObject({ method: 'POST', redirect: 'error' });
+      expect(init).toMatchObject({ method: 'POST', redirect: 'manual' });
       const headers = new Headers(init.headers);
       expect(headers.get('authorization')).toBe('Bearer test-meterkey-only');
       expect(headers.get('idempotency-key')).toMatch(/^ip:[a-f0-9]{32}$/);
