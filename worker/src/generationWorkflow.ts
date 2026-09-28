@@ -377,8 +377,22 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       const detail = errorText.slice(0, 2_000);
       let errorCode = '';
       try {
-        const parsed = JSON.parse(errorText) as { code?: unknown };
+        const parsed = JSON.parse(errorText) as { code?: unknown; qa?: unknown };
         errorCode = typeof parsed.code === 'string' ? parsed.code : '';
+        const qa = parsed.qa as { failures?: unknown; warnings?: unknown; cells?: unknown } | undefined;
+        if (qa && Array.isArray(qa.failures)) {
+          // The job event keeps only a short prefix of this error; the full
+          // per-cell verdict must be readable from Workers Logs to be actionable.
+          const cells = Array.isArray(qa.cells) ? qa.cells as Array<Record<string, unknown>> : [];
+          console.error(JSON.stringify({
+            event: 'template_atlas_qa_rejected',
+            jobId: job.id,
+            path,
+            failures: qa.failures.slice(0, 40),
+            warnings: Array.isArray(qa.warnings) ? qa.warnings.slice(0, 10) : [],
+            failingCells: cells.filter(cell => Array.isArray(cell.failures) && cell.failures.length).slice(0, 12),
+          }));
+        }
       } catch {
         // The bounded response text below remains the diagnostic for non-JSON failures.
       }
