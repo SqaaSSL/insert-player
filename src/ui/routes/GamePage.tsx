@@ -691,7 +691,7 @@ export function GamePage({
       {!isAura && loadingPhase === 'hidden' && combatPendingStart ? (
         <CombatStartReady mode={isRush ? 'rush' : 'fight'} playerName={launchTarget.data.p1Name ?? 'Player One'} photoHash={launchTarget.data.p1PhotoHash} onStart={startCombat} />
       ) : null}
-      {isAura && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
+      {isAura && !trial && loadingPhase === 'hidden' && !auraSummary && auraCapture?.state === 'recording' ? (
         <p className="aura-capture-status" role="status">{paused ? 'Recording paused' : 'Recording match'} · game only</p>
       ) : null}
       {isAura && loadingPhase === 'hidden' && auraStartup && !auraSummary && !auraAwaitingInput && auraOnboarding?.phase !== 'practice' ? (
