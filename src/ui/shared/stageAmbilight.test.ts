@@ -11,7 +11,8 @@ describe('stage ambilight', () => {
   it('lights only the desktop combat shells and never under reduced motion', () => {
     expect(ambilightEnabled({ sceneKey: 'FightScene', coarsePointer: false, reducedMotion: false })).toBe(true);
     expect(ambilightEnabled({ sceneKey: 'RushScene', coarsePointer: false, reducedMotion: false })).toBe(true);
-    expect(ambilightEnabled({ sceneKey: 'AuraScene', coarsePointer: false, reducedMotion: false })).toBe(false);
+    expect(ambilightEnabled({ sceneKey: 'AuraScene', coarsePointer: false, reducedMotion: false })).toBe(true);
+    expect(ambilightEnabled({ sceneKey: 'BootScene', coarsePointer: false, reducedMotion: false })).toBe(false);
     expect(ambilightEnabled({ sceneKey: 'FightScene', coarsePointer: true, reducedMotion: false })).toBe(false);
     expect(ambilightEnabled({ sceneKey: 'FightScene', coarsePointer: false, reducedMotion: true })).toBe(false);
   });

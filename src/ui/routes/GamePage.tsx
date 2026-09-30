@@ -678,15 +678,6 @@ export function GamePage({
 
   const content = (
     <>
-      {isAura ? null : (
-        <canvas
-          ref={ambilightRef}
-          className={`game-shell__ambilight${ambilightLive ? ' is-live' : ''}${matchActionsVisible ? ' is-dimmed' : ''}`}
-          width={AMBILIGHT_SAMPLE_WIDTH}
-          height={AMBILIGHT_SAMPLE_HEIGHT}
-          aria-hidden="true"
-        />
-      )}
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
@@ -1101,6 +1092,13 @@ export function GamePage({
 
   return (
     <div className={`game-shell${isAura ? ` is-aura${auraViewport.portrait ? ' is-portrait' : ''}` : ' is-combat'}`}>
+      <canvas
+        ref={ambilightRef}
+        className={`game-shell__ambilight${ambilightLive ? ' is-live' : ''}${matchActionsVisible ? ' is-dimmed' : ''}`}
+        width={AMBILIGHT_SAMPLE_WIDTH}
+        height={AMBILIGHT_SAMPLE_HEIGHT}
+        aria-hidden="true"
+      />
       {isAura ? <div className="game-shell__aura-frame">{content}</div> : (
         <>
           <div className="game-shell__combat-frame">{content}</div>
