@@ -25,7 +25,11 @@ export function initialCreationTier(requestedTier: unknown, paidTiersAreLocked: 
   ) {
     return offeredQualityTier(requestedTier);
   }
-  return paidTiersAreLocked || creationPackage === 'aura' ? 'rookie' : 'contender';
+  // Rookie is the default for everyone: a signed-in account with 11 credits
+  // must not land on an 11-credit Champion by accident. Champion stays one
+  // click away and any explicit ?tier= request is honoured above.
+  void creationPackage;
+  return 'rookie';
 }
 
 /** The same visible price is sent to authorization. A missing account quote

@@ -1,7 +1,7 @@
 .battle-finisher { width: 100%; box-sizing: border-box; padding: 22px; border: 1px solid #635633; background: #100f12; color: #fff4d6; text-align: left; }
 .battle-finisher__heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .battle-finisher--compact { display: grid; gap: 8px; padding: 0; border: 0; background: transparent; text-align: center; }
-.battle-finisher--compact .battle-finisher__offer { width: 100%; min-height: 56px; padding: 14px 18px; white-space: normal; line-height: 1.65; font-size: clamp(11px, 2vw, 14px); }
+.battle-finisher--compact .battle-finisher__offer { width: 100%; min-height: 44px; padding: 10px 18px; white-space: normal; line-height: 1.65; font-size: clamp(11px, 2vw, 14px); }
 .battle-finisher--compact .battle-finisher__offer-note { margin: 0; font: 12px/1.5 'Space Grotesk', sans-serif; color: #d5c9b5; }
 .battle-finisher__frame { margin: 10px 0; color: #d5c9b5; font: 12px/1.6 'Space Grotesk', sans-serif; }
 .battle-finisher__frame summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }

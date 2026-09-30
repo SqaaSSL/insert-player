@@ -44,8 +44,13 @@ describe('includedRookieStatus', () => {
 });
 
 describe('initialCreationTier', () => {
-  it('keeps Champion as the normal signed-in recommendation', () => {
-    expect(initialCreationTier(null, false)).toBe('contender');
+  it('defaults every account to Rookie, whatever its balance', () => {
+    expect(initialCreationTier(null, false)).toBe('rookie');
+    expect(initialCreationTier(undefined, false, 'complete')).toBe('rookie');
+  });
+
+  it('still honours an explicit Champion request when paid tiers are open', () => {
+    expect(initialCreationTier('contender', false)).toBe('contender');
   });
 
   it('honors the Rookie entry point from Arcade', () => {

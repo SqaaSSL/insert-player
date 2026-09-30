@@ -34,7 +34,7 @@ afterEach(() => { for (const slot of hooks.slots) slot?.cleanup?.(); vi.useRealT
 describe('optional finisher flow', () => {
   it('starts with a compact offer and never saves remotely, spends or publishes on render', async () => {
     flush(); await settle(); expect(button('Fatality · 1 credit')).toBeTruthy();
-    expect(button('Fatality · 1 credit').props.className).toContain('asf-btn--primary');
+    expect(button('Fatality · 1 credit').props.className).not.toContain('asf-btn--primary');
     expect(button('Fatality · 1 credit').props['aria-expanded']).toBe(false);
     expect(find(node => node.type === 'input')).toBeUndefined(); expect(saveBattleCapture).not.toHaveBeenCalled(); expect(generateBattleFinisher).not.toHaveBeenCalled(); expect(publishSavedBattle).not.toHaveBeenCalled();
     expand(); expect(button('Generate fatality · 1 credit').props.disabled).toBe(true);
