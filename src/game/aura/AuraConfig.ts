@@ -30,6 +30,9 @@ export const AURA_PHRASE_BEATS = 16;
 /** Three shared phrases create a beginning, escalation, and final-round climax. */
 export const AURA_ROUNDS = 3;
 export const AURA_INITIAL_COUNT_IN_BEATS = 8;
+/** First-time demo and debut: one bar instead of two before the first turn.
+ * Shared challenges keep the two-bar chart, because their links fingerprint it. */
+export const AURA_FIRST_RUN_COUNT_IN_BEATS = 4;
 export const AURA_FINISH_BEATS = 4;
 
 export type AuraLaneKeys = readonly [string, string, string, string];
