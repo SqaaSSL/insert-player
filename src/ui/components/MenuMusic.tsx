@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import '../menu-music.css';
 
 const PREFERENCE_KEY = 'insert-player-menu-music';
-const readPreference = () => { try { return localStorage.getItem(PREFERENCE_KEY) !== 'off'; } catch { return true; } };
+// Opt-in: a first click on "Try Fight" must not start the menu bed a second
+// before the match takes over the audio. Players who turned it on keep it on.
+const readPreference = () => { try { return localStorage.getItem(PREFERENCE_KEY) === 'on'; } catch { return false; } };
 
 /** The cabinet bed lives only outside the game. A rejected autoplay is shown as
  * an invitation, never as an audible state; the next gesture can unlock it. */
