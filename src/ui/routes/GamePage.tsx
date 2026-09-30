@@ -47,6 +47,7 @@ import { AuraControls } from '../components/AuraControls.tsx';
 import { AuraBattleResults } from '../components/AuraBattleResults.tsx';
 import { AuraOnboardingHint } from '../components/AuraOnboardingHint.tsx';
 import { AuraStartReady } from '../components/AuraStartReady.tsx';
+import { ambilightEnabled, attachStageAmbilight, readAmbilightEnvironment, AMBILIGHT_SAMPLE_HEIGHT, AMBILIGHT_SAMPLE_WIDTH } from '../shared/stageAmbilight.ts';
 import { shouldGuideAuraBattle, rememberAuraOnboarding } from '../shared/auraOnboarding.ts';
 import { AURA_ONBOARDING_EVENT, AURA_ONBOARDING_SKIP_EVENT, canGuideAuraFirstBattle, isAuraOnboardingDetail, type AuraOnboardingDetail } from '../../game/aura/AuraOnboarding.ts';
 import { trackProductEvent } from '../../services/ProductEvents.ts';
@@ -139,6 +140,8 @@ export function GamePage({
   const [paused, setPaused] = useState(false);
   const onlineMatch = Boolean(launchTarget.data.online);
   const [matchActionsVisible, setMatchActionsVisible] = useState(false);
+  const [ambilightLive, setAmbilightLive] = useState(false);
+  const ambilightRef = useRef<HTMLCanvasElement | null>(null);
   const [netState, setNetState] = useState<NetStateDetail | null>(null);
   const [onlineRematch, setOnlineRematch] = useState<OnlineRematchStateDetail>({ state: 'idle' });
   const isRush = launchTarget.sceneKey === 'RushScene';
@@ -584,10 +587,17 @@ export function GamePage({
     window.addEventListener(RUNTIME_READY_EVENT, onRuntimeReady);
     window.addEventListener(AURA_PRESENTATION_EVENT, onAuraPresentation);
     armTimeout();
+    let detachAmbilight: (() => void) | null = null;
     void import('../../game/createGame.ts')
       .then(({ createGame }) => {
         if (disposed) return;
         game = createGame('game-container', launchTarget);
+        const surface = ambilightRef.current?.getContext('2d');
+        if (surface && ambilightEnabled(readAmbilightEnvironment(launchTarget.sceneKey))) {
+          detachAmbilight = attachStageAmbilight(game, surface, {
+            onFirstFrame: () => setAmbilightLive(true),
+          });
+        }
       })
       .catch((err: unknown) => {
         if (!disposed) {
@@ -605,6 +615,9 @@ export function GamePage({
       debugInfo('[GamePage] Destroying Phaser runtime', {
         sceneKey: launchTarget.sceneKey,
       });
+      detachAmbilight?.();
+      detachAmbilight = null;
+      setAmbilightLive(false);
       game?.destroy(true);
       game = null;
     };
@@ -665,6 +678,15 @@ export function GamePage({
 
   const content = (
     <>
+      {isAura ? null : (
+        <canvas
+          ref={ambilightRef}
+          className={`game-shell__ambilight${ambilightLive ? ' is-live' : ''}${matchActionsVisible ? ' is-dimmed' : ''}`}
+          width={AMBILIGHT_SAMPLE_WIDTH}
+          height={AMBILIGHT_SAMPLE_HEIGHT}
+          aria-hidden="true"
+        />
+      )}
       <div className="game-shell__surface">
         <div id="game-container" className="game-shell__canvas" />
       </div>
