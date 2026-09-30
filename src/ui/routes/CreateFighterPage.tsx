@@ -57,7 +57,8 @@ import {
 import { captureApiRequestContext, runWithProviderSession } from '../../services/ApiClient.ts';
 import { debugWarn } from '../../services/DebugLog.ts';
 import { paidTiersLocked, type AuthStatus } from '../authState.ts';
-import { currentGenerationLegalAttestation } from '../legal.ts';
+import { currentGenerationLegalAttestation, SUPPORT_EMAIL } from '../legal.ts';
+import { describePausedGeneration, pausedAttemptsForCharacter } from '../shared/generationFailureCopy.ts';
 import {
   listGenerationJobs,
   startGenerationJob,
@@ -216,6 +217,7 @@ export function CreateFighterPage({
   const [billingProfileChecked, setBillingProfileChecked] = useState(authStatus !== 'signed-in');
   const [billingRetrySignal, setBillingRetrySignal] = useState(0);
   const [resumableJob, setResumableJob] = useState<GenerationJob | null>(null);
+  const [pausedGenerationStuck, setPausedGenerationStuck] = useState(false);
   const [availableRecoveryJob, setAvailableRecoveryJob] = useState<GenerationJob | null>(null);
   const [requestedRecoveryJobId, setRequestedRecoveryJobId] = useState<string | null>(null);
   const [videoReviewJob, setVideoReviewJob] = useState<GenerationJob | null>(null);
@@ -406,10 +408,9 @@ export function CreateFighterPage({
         if (!active && resumable) {
           setVideoReviewJob(null);
           setResumableJob(recovering);
-          setError(
-            `${recovering.errorMessage ?? 'Generation paused.'} ` +
-            `${recovering.preservedArtifactCount} completed stages are preserved; retry continues without charging again.`,
-          );
+          const paused = describePausedGeneration(recovering, pausedAttemptsForCharacter(jobs, recovering.fighterId));
+          setPausedGenerationStuck(paused.stuck);
+          setError(paused.message);
           setRunning(false);
           setRecoveryReady(true);
           return;
@@ -1029,6 +1030,7 @@ export function CreateFighterPage({
     setSprites([]);
     setGenerating(new Set());
     setResumableJob(null);
+    setPausedGenerationStuck(false);
     setAvailableRecoveryJob(null);
     setRequestedRecoveryJobId(null);
     setCloudRecoveryRetryRequired(false);
@@ -1418,6 +1420,12 @@ export function CreateFighterPage({
                 Choose Photo Again
               </button>
             )}
+            {resumableJob && pausedGenerationStuck ? (
+              <>
+                <button onClick={choosePhotoAgain} disabled={running}>Try A Different Photo</button>
+                <a className="create-error__support" href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Character stuck')}`}>Contact us</a>
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}
