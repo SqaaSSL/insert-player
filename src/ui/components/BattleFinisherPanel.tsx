@@ -143,7 +143,9 @@ export function BattleFinisherPanel({ capture, battleId, initialBattle, authStat
     : finisher?.status === 'failed' ? finisher.creditRefunded ? 'Generation failed. Your credit was returned.' : 'Generation failed. Open for details.'
       : '5-second AI finale · saved with this battle';
   if (!expanded) return <section className="battle-finisher battle-finisher--compact" aria-label="Battle finisher">
-    <button className="asf-btn asf-btn--primary battle-finisher__offer" type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{compactLabel}</button>
+    {/* The paid offer is secondary on result screens: the next step (Crew, rematch, menu) keeps the visual lead.
+        A finished or in-progress fatality is the player's own content, so it stays primary. */}
+    <button className={`asf-btn${finisher && finisher.status !== 'failed' ? ' asf-btn--primary' : ''} battle-finisher__offer`} type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{compactLabel}</button>
     <p className="battle-finisher__offer-note" role={finisher ? 'status' : undefined}>{compactNote}</p>
   </section>;
   return <section className="battle-finisher" aria-label="Battle finisher">
