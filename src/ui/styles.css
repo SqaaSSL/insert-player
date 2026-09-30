@@ -2782,6 +2782,19 @@
            px-4 py-3 font-arcade text-[11px] tracking-[0.1em] uppercase text-asf-gold-bright;
   }
 
+  /* The explanation is a sentence for a person, not a system banner. */
+  .create-error > strong {
+    @apply block font-sans text-[14px] font-semibold normal-case leading-[1.55] tracking-normal text-asf-cream;
+  }
+
+  .create-error .legal-consent {
+    @apply font-sans text-[12px] normal-case leading-[1.5] tracking-normal text-asf-cream;
+  }
+
+  .create-error__support {
+    @apply self-center font-sans text-[13px] normal-case tracking-normal text-asf-gold underline underline-offset-2;
+  }
+
   .create-recovery-error {
     @apply flex flex-col items-start gap-2 rounded-[4px] border border-asf-red
            bg-[rgba(80,10,10,0.72)] px-4 py-3 text-left;
