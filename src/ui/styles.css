@@ -1330,6 +1330,31 @@
     @apply h-full w-full;
   }
 
+  /* Stage ambilight: the live match colours, blurred beyond recognition,
+     projected onto the letterbox pillars beside the arena. Colour only, no
+     detail; it fades in once the first frame is sampled and dims under the
+     end-of-match actions so the modal stays clean. Hidden on touch (no
+     pillars) and under reduced motion. */
+  .game-shell.is-combat .game-shell__surface {
+    @apply relative z-10;
+  }
+
+  .game-shell__ambilight {
+    @apply pointer-events-none absolute inset-0 z-0 h-full w-full opacity-0
+           transition-opacity duration-700 ease-out
+           [filter:blur(64px)_saturate(1.35)_brightness(0.55)] [transform:scale(1.12)]
+           [mask-image:linear-gradient(90deg,transparent_0%,black_12%,black_88%,transparent_100%)]
+           motion-reduce:hidden [@media(pointer:coarse)]:hidden;
+  }
+
+  .game-shell__ambilight.is-live {
+    @apply opacity-45;
+  }
+
+  .game-shell__ambilight.is-live.is-dimmed {
+    @apply opacity-15;
+  }
+
   .game-shell__canvas {
     @apply relative overflow-hidden;
   }
