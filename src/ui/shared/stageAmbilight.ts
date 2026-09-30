@@ -22,10 +22,10 @@ export interface AmbilightEnvironment {
   reducedMotion: boolean;
 }
 
-/** Only the desktop combat shells have pillars; Aura owns its own frame and touch has no pillars. */
+/** Desktop only: touch shells have no letterbox to light. Fight, Rush and Aura all keep their aspect on wide screens. */
 export function ambilightEnabled(env: AmbilightEnvironment): boolean {
   if (env.coarsePointer || env.reducedMotion) return false;
-  return env.sceneKey === 'FightScene' || env.sceneKey === 'RushScene';
+  return env.sceneKey === 'FightScene' || env.sceneKey === 'RushScene' || env.sceneKey === 'AuraScene';
 }
 
 export function readAmbilightEnvironment(sceneKey: string): AmbilightEnvironment {
