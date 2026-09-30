@@ -52,8 +52,7 @@ import {
   AURA_ROUNDS,
   getAuraDifficulty,
   type AuraLaneKeys,
-  type AuraDifficultyId,
-} from '../aura/AuraConfig.ts';
+  type AuraDifficultyId, AURA_FIRST_RUN_COUNT_IN_BEATS, AURA_INITIAL_COUNT_IN_BEATS} from '../aura/AuraConfig.ts';
 import { getAuraTrack, pickAuraTrackForMatch, type AuraTrack } from '../aura/AuraTracks.ts';
 import {
   AURA_ROUTINE_ANIMATION_NAMES,
@@ -516,7 +515,12 @@ export class AuraScene extends Phaser.Scene {
     this.layout = createAuraLayout(this.scale.width, this.scale.height);
     this.track = getAuraTrack(this.matchData.auraTrackId)
       ?? pickAuraTrackForMatch(this.matchSeed, this.customStageKey ? null : this.resolvedStageId);
-    this.chart = createAuraChart(this.matchSeed, this.difficultyId, this.track);
+    // The demo and the onboarding debut get a one-bar intro so "Go!" comes quickly.
+    // Challenges and online duels keep the shared two-bar chart.
+    const firstRun = !this.online && !this.matchData.auraChallenge
+      && (this.matchData.experience === 'trial' || this.matchData.experience === 'onboarding');
+    this.chart = createAuraChart(this.matchSeed, this.difficultyId, this.track,
+      firstRun ? AURA_FIRST_RUN_COUNT_IN_BEATS : AURA_INITIAL_COUNT_IN_BEATS);
     this.battle = new AuraBattle(this.chart, this.difficultyId);
     this.captureId = crypto.randomUUID();
     this.emitCapture({ id: this.captureId, state: 'preparing' });

@@ -95,12 +95,14 @@ export function createAuraChart(
   seed: number,
   difficultyId: AuraDifficultyId = 'viral',
   track: AuraTrack = DEFAULT_AURA_TRACK,
+  initialCountInBeats: number = AURA_INITIAL_COUNT_IN_BEATS,
 ): AuraChart {
   const normalizedSeed = (seed >>> 0) || 0x41555241;
   const difficulty = getAuraDifficulty(difficultyId);
   const rng = new SeededRng(normalizedSeed ^ 0x41555241);
   const beatMs = auraBeatMs(track);
-  const firstTurnMs = track.beatOffsetMs + AURA_INITIAL_COUNT_IN_BEATS * beatMs;
+  const countIn = Number.isInteger(initialCountInBeats) && initialCountInBeats >= 4 ? initialCountInBeats : AURA_INITIAL_COUNT_IN_BEATS;
+  const firstTurnMs = track.beatOffsetMs + countIn * beatMs;
   const turns: AuraTurn[] = [];
 
   for (let round = 0; round < AURA_ROUNDS; round += 1) {
