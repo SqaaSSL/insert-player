@@ -150,6 +150,15 @@ interface GalleryPageProps {
   activeCrew?: { id: string; name: string } | null;
   onOpenCrew?: () => void;
   onNavigateLegal?: (route: '/legal' | '/privacy' | '/terms' | '/refunds') => void;
+  /** Start a match as this fighter. Absent: no play buttons. */
+  onPlayFighter?: (photoHash: string, mode: 'aura' | 'fight') => void;
+}
+
+/** Show the fighter moving first; the uploaded photo stays one tap away. */
+function initialGallerySelection(meta: CachedMeta): PreviewSelection {
+  return meta.animationsReady.includes('idle')
+    ? { kind: 'animation', animationName: 'idle' }
+    : { kind: 'source', source: defaultSourceForMeta(meta) };
 }
 
 type RetryTarget = { kind: 'source'; key: SourceKey } | { kind: 'animation'; name: string };
@@ -182,6 +191,7 @@ export function GalleryPage({
   activeCrew = null,
   onOpenCrew,
   onNavigateLegal,
+  onPlayFighter,
 }: GalleryPageProps) {
   const [activeTab, setActiveTab] = useState<'characters' | 'stages'>(() => (
     new URLSearchParams(window.location.search).get('tab') === 'stages' ? 'stages' : 'characters'
@@ -590,7 +600,7 @@ export function GalleryPage({
 
   useEffect(() => {
     if (!meta) return;
-    setSelection({ kind: 'source', source: defaultSourceForMeta(meta) });
+    setSelection(initialGallerySelection(meta));
   }, [meta?.photoHash]);
 
   const previewSprite = useMemo<PreviewSpriteLike | null>(() => {
@@ -750,7 +760,7 @@ export function GalleryPage({
     setSprites([]);
     setIntro(null);
     setCurrentIndex(index);
-    setSelection({ kind: 'source', source: defaultSourceForMeta(selectedMeta) });
+    setSelection(initialGallerySelection(selectedMeta));
   };
 
   const selectArcadeFighter = async (fighter: CloudFighter) => {
@@ -1854,6 +1864,16 @@ export function GalleryPage({
               </div>
               <div className="roster-hero__actions">
                 <div className="gallery-hero__status" role="status" aria-live="polite">{status}</div>
+                {onPlayFighter && meta.animationsReady.length > 0 && !currentFighterBusy ? (
+                  <div className="gallery-hero__play">
+                    <Button variant="primary" onClick={() => onPlayFighter(meta.photoHash, 'aura')}>
+                      Play Aura as {meta.characterName}
+                    </Button>
+                    <Button onClick={() => onPlayFighter(meta.photoHash, 'fight')}>
+                      Play Fight
+                    </Button>
+                  </div>
+                ) : null}
                 <div className="asf-toolbar">
                   {ownerActionsReady && pendingFighterSync ? (
                     <Button
@@ -1936,15 +1956,6 @@ export function GalleryPage({
                 </div>
               </div>
             </header>
-
-            {!isArcadeFighter ? (
-              <GenerationConsent
-                checked={legalAccepted}
-                disabled={currentFighterBusy}
-                onChange={setLegalAccepted}
-                onNavigate={onNavigateLegal}
-              />
-            ) : null}
 
             {ownerActionsReady && videoReviewJob ? (
               <VideoGenerationReviewGate
@@ -2099,6 +2110,16 @@ export function GalleryPage({
                 </div>
               </div>
             </section>
+
+            {/* Needed only for paid upgrades and retries, so it follows the fighter. */}
+            {!isArcadeFighter ? (
+              <GenerationConsent
+                checked={legalAccepted}
+                disabled={currentFighterBusy}
+                onChange={setLegalAccepted}
+                onNavigate={onNavigateLegal}
+              />
+            ) : null}
           </>
         ) : !currentStageEntry ? (
           <section className="gallery-empty">

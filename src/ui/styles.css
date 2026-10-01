@@ -1818,6 +1818,15 @@
     @apply grid gap-5 grid-cols-[minmax(0,1fr)_340px] max-[1200px]:grid-cols-1;
   }
 
+  .gallery-hero__play {
+    @apply mb-3 flex flex-wrap gap-2;
+  }
+
+  /* Single column: the moving fighter comes before sources and the move list. */
+  .gallery-panel--preview {
+    @apply max-[1200px]:order-first;
+  }
+
   .gallery-panel--preview {
     @apply [background:linear-gradient(180deg,rgba(14,10,30,0.98),rgba(4,3,14,0.98)),radial-gradient(circle_at_top_right,rgba(255,42,42,0.16),transparent_46%)];
   }

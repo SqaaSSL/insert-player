@@ -875,6 +875,9 @@ export function App({
           activeCrew={activeCrew}
           onOpenCrew={() => navigate('/onboarding')}
           onNavigateLegal={navigateToLegal}
+          onPlayFighter={(photoHash, mode) => navigate(
+            debutDestination(mode), new URLSearchParams({ player: photoHash }).toString(),
+          )}
         />
       );
     }
