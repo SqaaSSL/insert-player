@@ -797,7 +797,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
             atlases.push({ planId, rawKey: checkpoint.rawKey, sizeBytes: checkpoint.sizeBytes });
             checkpoints.push(checkpoint);
           }
+          const callStartedAt = Date.now();
           const result = await this.callProcessor<CompileTemplateAtlasResult>(job, '/v1/compile-template-atlas', { rendererVersion, animationNames: [name] }, atlases);
+          const processorMs = Date.now() - callStartedAt;
           const sprite = result.sprites?.[0];
           if (result.sprites?.length !== 1) throw new NonRetryableError('Compiler returned an unexpected animation count');
           let bytes: ArrayBuffer, rawBytes: ArrayBuffer;
@@ -825,6 +827,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           });
           await recordSpriteCheckpoint(this.env, job, { animationName: name,
             stageIndex: sourceCount + names.indexOf(name) + 1, sprite: persisted, processingVersion: 6 });
+          console.log(JSON.stringify({ event: 'template_sprite_compiled', jobId: job.id, animation: name,
+            processorMs, persistMs: Date.now() - callStartedAt - processorMs,
+            atlasBytesSent: atlases.reduce((sum, atlas) => sum + (atlas.sizeBytes ?? 0), 0), spriteBytes: bytes.byteLength + rawBytes.byteLength }));
         }
         await this.recordProgress(job, `sprite:${name}`, progressCurrent, `${name} compiled and saved; original atlas retained`);
       });
