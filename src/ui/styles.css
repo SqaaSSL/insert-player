@@ -2777,6 +2777,10 @@
     @apply m-0 font-sans text-[12px] normal-case leading-[1.6] text-asf-muted;
   }
 
+  .roster-hero__leave-note {
+    @apply mt-2 max-w-[62ch] font-sans text-[13px] normal-case leading-[1.5] tracking-normal text-asf-cream/80;
+  }
+
   .create-error {
     @apply rounded-[4px] border-2 border-asf-red bg-[rgba(80,10,10,0.92)]
            px-4 py-3 font-arcade text-[11px] tracking-[0.1em] uppercase text-asf-gold-bright;

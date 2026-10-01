@@ -1321,6 +1321,12 @@ export function CreateFighterPage({
           <p className="gallery-eyebrow">{done ? 'Ready' : error ? 'Failed' : 'Forging'}</p>
           <h1>{(name.trim() || DEFAULT_NAME).toUpperCase()}</h1>
           <p className="roster-hero__copy">{stageText}</p>
+          {serverProgress && !done && !error ? (
+            <p className="roster-hero__leave-note">
+              This takes about 10 minutes. You can close this page: we keep building in the cloud,
+              and your character will be waiting in My characters.
+            </p>
+          ) : null}
         </div>
         <div className="roster-hero__actions">
           <div className="gallery-hero__status" role="status" aria-live="polite">
