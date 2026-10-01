@@ -126,7 +126,7 @@ describe('GalleryFighterList', () => {
       />,
     );
 
-    expect(markup.indexOf('Global roster')).toBeLessThan(markup.indexOf('Your fighters'));
+    expect(markup.indexOf('Your fighters')).toBeLessThan(markup.indexOf('Global roster'));
     expect(markup).toContain('aria-label="1 owned fighter"');
     expect(markup).toContain('Local Hero');
     expect(markup).not.toContain('Donald Trump cached copy');

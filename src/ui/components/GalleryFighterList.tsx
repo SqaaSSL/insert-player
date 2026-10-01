@@ -152,6 +152,47 @@ export function GalleryFighterList({
 
   return (
     <div className="gallery-sidebar__list gallery-fighter-list">
+      {/* Players look for their own fighters first; the official roster follows. */}
+      <section
+        className="gallery-fighter-list__group"
+        aria-labelledby="gallery-owned-fighters-title"
+      >
+        <header className="gallery-fighter-list__header">
+          <h2 id="gallery-owned-fighters-title" className="gallery-fighter-list__title">
+            Your fighters
+          </h2>
+          <span
+            className="gallery-fighter-list__count"
+            aria-label={`${owned.length} owned ${owned.length === 1 ? 'fighter' : 'fighters'}`}
+          >
+            {owned.length}
+          </span>
+        </header>
+
+        {owned.length === 0 ? (
+          <p className="gallery-fighter-list__status">No personal fighters yet.</p>
+        ) : null}
+
+        {owned.map((meta) => {
+          const isSelected = selectedPhotoHash === meta.photoHash;
+          return (
+            <button
+              key={meta.photoHash}
+              type="button"
+              className={`gallery-fighter-card gallery-fighter-list__card${isSelected ? ' is-active' : ''}`}
+              aria-pressed={isSelected}
+              disabled={disabled}
+              onClick={() => onSelectMeta(meta)}
+            >
+              <span className="gallery-fighter-card__name">{meta.characterName}</span>
+              <span className="gallery-fighter-card__meta">
+                {tierLabel(meta.qualityTier)} · {formatDate(meta.createdAt)} · {animationLabel(meta.animationsReady.length)}
+              </span>
+            </button>
+          );
+        })}
+      </section>
+
       <section
         className="gallery-fighter-list__group"
         aria-labelledby="gallery-global-roster-title"
@@ -211,46 +252,6 @@ export function GalleryFighterList({
                       ? isCompleteCloudFighterRoster(fighter) ? 'Playable' : 'Unavailable'
                       : 'Previously loaded'
                 }
-              </span>
-            </button>
-          );
-        })}
-      </section>
-
-      <section
-        className="gallery-fighter-list__group"
-        aria-labelledby="gallery-owned-fighters-title"
-      >
-        <header className="gallery-fighter-list__header">
-          <h2 id="gallery-owned-fighters-title" className="gallery-fighter-list__title">
-            Your fighters
-          </h2>
-          <span
-            className="gallery-fighter-list__count"
-            aria-label={`${owned.length} owned ${owned.length === 1 ? 'fighter' : 'fighters'}`}
-          >
-            {owned.length}
-          </span>
-        </header>
-
-        {owned.length === 0 ? (
-          <p className="gallery-fighter-list__status">No personal fighters yet.</p>
-        ) : null}
-
-        {owned.map((meta) => {
-          const isSelected = selectedPhotoHash === meta.photoHash;
-          return (
-            <button
-              key={meta.photoHash}
-              type="button"
-              className={`gallery-fighter-card gallery-fighter-list__card${isSelected ? ' is-active' : ''}`}
-              aria-pressed={isSelected}
-              disabled={disabled}
-              onClick={() => onSelectMeta(meta)}
-            >
-              <span className="gallery-fighter-card__name">{meta.characterName}</span>
-              <span className="gallery-fighter-card__meta">
-                {tierLabel(meta.qualityTier)} · {formatDate(meta.createdAt)} · {animationLabel(meta.animationsReady.length)}
               </span>
             </button>
           );
