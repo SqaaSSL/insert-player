@@ -4,7 +4,7 @@ import {
 } from '../../../src/services/TemplateAtlasContract';
 import { decodePngBase64, TemplateAtlasRequestError } from './provider';
 import { getTemplateAtlasPlans } from './templates';
-import { assembleTemplateAtlasHqAnimation, compileTemplateAtlas } from './compiler';
+import { assembleTemplateAtlasHqAnimation, compileTemplateAtlas, templateAtlasCompilerCacheInfo } from './compiler';
 
 export const MAX_COMPILED_TEMPLATE_RESPONSE_BYTES = 24 * 1024 * 1024;
 
@@ -49,16 +49,27 @@ const defaults: TemplateAtlasCompileDependencies = {
 
 /** Inference-free. A failed matte/grid check can only reprocess the checkpointed bytes. */
 export async function compileTemplateAtlasRequest(input: unknown, dependencies: TemplateAtlasCompileDependencies = defaults): Promise<CompileTemplateAtlasResult> {
+  const startedAt = performance.now();
   const request = validateCompileTemplateAtlasRequest(input);
   const plans = await dependencies.plans(request.rendererVersion, request.animationNames);
   const compiled = [];
+  const cacheBefore = templateAtlasCompilerCacheInfo().entries;
   // Sequential decoding bounds peak memory; the compiler's bounded cache shares prior mattes.
   for (const plan of plans) {
     const atlas = request.atlases.find(candidate => candidate.planId === plan.planId);
     if (!atlas) invalid('Required native RAW atlas is missing');
     compiled.push(await dependencies.compile(decodePngBase64(atlas.rawBase64), plan));
   }
+  const compiledAt = performance.now();
   const result = await dependencies.assemble(plans, compiled, request.animationNames[0]);
+  const cacheAfter = templateAtlasCompilerCacheInfo();
+  // One structured line per animation: where the compile time goes in production.
+  console.log(JSON.stringify({
+    event: 'template_atlas_compile_timing', animation: request.animationNames[0],
+    compileMs: Math.round(compiledAt - startedAt), assembleMs: Math.round(performance.now() - compiledAt),
+    cacheEntriesBefore: cacheBefore, cacheEntriesAfter: cacheAfter.entries, cacheBytes: cacheAfter.bytes,
+    hqBytes: result.hqPng.length, rawHqBytes: result.rawHqPng.length,
+  }));
   // Reject certain oversize results before allocating base64 strings/JSON.
   const encodedImageBytes = 4 * Math.ceil(result.hqPng.length / 3) + 4 * Math.ceil(result.rawHqPng.length / 3);
   if (encodedImageBytes > MAX_COMPILED_TEMPLATE_RESPONSE_BYTES) {
