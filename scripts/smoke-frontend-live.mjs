@@ -92,6 +92,8 @@ const FRONTEND_RETRY_DELAY_MS = parsePositiveTimeoutMs(
   'ASF_FRONTEND_RETRY_DELAY_MS',
 );
 
+const STALE_AURA_WATCH_RELEASE = 'missing Aura watch route references a different app release';
+
 const failures = [];
 
 function fail(message) {
@@ -218,13 +220,20 @@ async function assertMissingAuraWatchRoutes(currentAssetPath) {
   for (const origin of origins) {
     const target = `${origin}/watch/${id}`;
     let reason = '';
-    for (let attempt = 0; attempt < 3; attempt++) {
+    const started = Date.now();
+    // A host still serving the previous release is propagation, not a defect:
+    // wait for it as long as every other frontend probe does. Any other
+    // failure keeps the original three-attempt budget.
+    for (let attempt = 0; ; attempt++) {
       const res = await fetchWithTimeout('missing Aura watch page', target);
       reason = missingAuraWatchReadinessError({ status: res.status, html: await res.text(),
         contentType: res.headers.get('Content-Type') ?? '', cacheControl: res.headers.get('Cache-Control') ?? '',
         expectedAssetPath: currentAssetPath });
       if (!reason) break;
-      if (attempt < 2) await sleep(FRONTEND_RETRY_DELAY_MS);
+      const stale = reason === STALE_AURA_WATCH_RELEASE;
+      const remaining = FRONTEND_READY_TIMEOUT_MS - (Date.now() - started);
+      if (stale ? remaining <= 0 : attempt >= 2) break;
+      await sleep(stale ? Math.min(FRONTEND_RETRY_DELAY_MS, remaining) : FRONTEND_RETRY_DELAY_MS);
     }
     assert(!reason, `Aura watch delivery failed at ${target}: ${reason}`);
   }
