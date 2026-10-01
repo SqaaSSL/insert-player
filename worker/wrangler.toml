@@ -110,7 +110,10 @@ image_build_context = ".."
 # Reviewed video batches retain named processors across a rollout; leave headroom
 # for the next review-gated action while older instances finish going idle.
 max_instances = 32
-instance_type = "basic"
+# The template-atlas compiler is single-threaded JavaScript (pngjs). On "basic"
+# (1/4 vCPU) a Rookie spent ~5 of its ~10 minutes compiling 20 animations that
+# take 28 s on a laptop core. "standard-2" gives the compiler a whole vCPU.
+instance_type = "standard-2"
 
 [containers.constraints]
 jurisdiction = "eu"
