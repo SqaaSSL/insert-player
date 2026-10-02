@@ -46,7 +46,7 @@
     "db:execute:0036": "node ../scripts/wrangler-workspace-log.mjs d1 execute insert-player-db --file=./migrations/0036_versus_invitations.sql"
   },
   "devDependencies": {
-    "wrangler": "^4.125.0"
+    "wrangler": "^4.146.0"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.6",
