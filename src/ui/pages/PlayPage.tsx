@@ -14,6 +14,8 @@ export interface PlayPageProps {
   lastGame?: FighterGameMode | null;
   onboardingStatus?: OnboardingStatus | null;
   onContinueOnboarding?: () => void;
+  /** Start the debut match directly from the Play page. */
+  onPlayDebut?: (photoHash: string, mode: 'aura' | 'fight') => void;
 }
 
 export function nextMissionTitle(status: Pick<OnboardingStatus, 'fighter' | 'debutComplete' | 'recommendedStep'>): string {
@@ -25,7 +27,7 @@ export function nextMissionTitle(status: Pick<OnboardingStatus, 'fighter' | 'deb
 }
 
 /** Play: Aura and Fight share the top row as equals; Rush stays available below. */
-export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding }: PlayPageProps) {
+export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding, onPlayDebut }: PlayPageProps) {
   return (
     <div className="product-entry product-entry--play">
       <header className="product-entry__page-heading">
@@ -33,7 +35,20 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
         {lastGame && <button type="button" className="product-entry__text-link" onClick={() => onPlay(lastGame)}>Continue {GAME_ENTRY_CONTENT[lastGame].name} →</button>}
       </header>
 
-      {onboardingStatus && !onboardingStatus.complete && onContinueOnboarding ? (
+      {onboardingStatus?.fighter && !onboardingStatus.debutComplete && onPlayDebut ? (
+        <section className="gallery-panel play-debut-card" aria-label="Next mission">
+          <p className="product-entry__genre">Next mission · your debut</p>
+          <h2>{onboardingStatus.fighter.name} is ready</h2>
+          <p>Play one match as {onboardingStatus.fighter.name} to finish your debut.</p>
+          <div className="play-debut-card__actions">
+            <Button variant="primary" onClick={() => onPlayDebut(onboardingStatus.fighter!.photoHash, 'aura')}>Debut in Aura</Button>
+            <Button onClick={() => onPlayDebut(onboardingStatus.fighter!.photoHash, 'fight')}>Debut in Fight</Button>
+          </div>
+          {onContinueOnboarding ? (
+            <button type="button" className="product-entry__text-link" onClick={onContinueOnboarding}>See my first run →</button>
+          ) : null}
+        </section>
+      ) : onboardingStatus && !onboardingStatus.complete && onContinueOnboarding ? (
         <section className="gallery-panel" aria-label="Next mission">
           <p className="product-entry__genre">Next mission</p>
           <h2>{nextMissionTitle(onboardingStatus)}</h2>

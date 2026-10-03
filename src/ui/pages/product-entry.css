@@ -440,3 +440,12 @@
   opacity: 0;
   pointer-events: none;
 }
+
+/* Debut card: the player's own Rookie and a one-tap way into its first match. */
+.play-debut-card {
+  @apply flex flex-col gap-3;
+}
+
+.play-debut-card__actions {
+  @apply flex flex-wrap gap-2 [&>*]:flex-[1_1_160px];
+}
