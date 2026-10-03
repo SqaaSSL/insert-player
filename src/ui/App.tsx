@@ -825,7 +825,8 @@ export function App({
     if (route === '/menu' || route === '/') return <PlayPage lastGame={readLastGame(authSessionKey)} onPlay={(mode) => readLastGame(authSessionKey) ? openGame(mode) : tryGame(mode)}
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
       onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')}
-      onboardingStatus={onboardingStatus} onContinueOnboarding={() => navigate('/onboarding')} />;
+      onboardingStatus={onboardingStatus} onContinueOnboarding={() => navigate('/onboarding')}
+      onPlayDebut={(photoHash, mode) => navigate(debutDestination(mode), debutSearch(debutDestination(mode), photoHash))} />;
     if (route === '/credits') {
       let returnTo: AppRoute | null = null;
       try { const saved = sessionStorage.getItem(`insert-player:finisher-return:${authSessionKey}`); if (saved && isBattleRoute(saved)) returnTo = saved as AppRoute; } catch { /* optional return context */ }
