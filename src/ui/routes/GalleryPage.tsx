@@ -1781,7 +1781,7 @@ export function GalleryPage({
     <div className="gallery-app">
       <aside className="gallery-sidebar">
         <div className="gallery-sidebar__header">
-          <h1>Training Room</h1>
+          <h1>My characters</h1>
           <Button onClick={onBack}>Back</Button>
         </div>
 
@@ -1874,86 +1874,6 @@ export function GalleryPage({
                     </Button>
                   </div>
                 ) : null}
-                <div className="asf-toolbar">
-                  {ownerActionsReady && pendingFighterSync ? (
-                    <Button
-                      disabled={currentFighterBusy}
-                      onClick={() => void retryPendingFighterSync(pendingFighterSync)}
-                    >
-                      {currentFighterBusy ? 'Syncing Fighter...' : 'Retry Fighter Sync'}
-                    </Button>
-                  ) : null}
-                  {ownerActionsReady && resumableJob ? (
-                    <Button
-                      disabled={currentFighterActionBusy || !legalAccepted}
-                      onClick={() => void resumeCloudGeneration(resumableJob)}
-                    >
-                      Resume Preserved Work · Free
-                    </Button>
-                  ) : null}
-                  {ownerActionsReady && auraOnly && meta.cloudFighterId ? (
-                    <Button variant="primary" disabled={currentFighterActionBusy || !legalAccepted} onClick={() => void quoteFightExpansion()}>
-                      Add Fight + Rush · Check Price
-                    </Button>
-                  ) : null}
-                  {ownerActionsReady ? upgradeOptions.map((tier, index) => (
-                    <Button
-                      key={tier.id}
-                      variant={index === 0 ? 'primary' : 'secondary'}
-                      disabled={currentFighterActionBusy || !legalAccepted}
-                      onClick={() => setPendingUpgradeTier(tier.id)}
-                    >
-                      Upgrade to {tier.label} · {quoteGenerationPackage(tier.id, 'complete').priceLabel}
-                    </Button>
-                  )) : null}
-                  {ownerActionsReady && hasOutdatedSprites && !hasTemplateAtlases ? (
-                    <Button disabled={currentFighterActionBusy} onClick={() => rebuildHd()}>
-                      Rebuild HD · Free
-                    </Button>
-                  ) : null}
-                  {ownerActionsReady ? (
-                    <>
-                      <Button disabled={currentFighterActionBusy} onClick={() => void syncCloud()}>
-                        Sync Cloud
-                      </Button>
-                      <Button
-                        variant={sharedWithActiveCrew ? 'primary' : 'secondary'}
-                        disabled={currentFighterActionBusy || sharedWithActiveCrew}
-                        onClick={() => {
-                          if (activeCrew) void updateFighterAccess('crew');
-                          else onOpenCrew?.();
-                        }}
-                      >
-                        {activeCrew ? `Crew · ${activeCrew.name}` : 'Set Up Crew'}
-                      </Button>
-                      <Button
-                        variant={meta.cloudAccessScope === 'community' || meta.cloudPublic ? 'primary' : 'secondary'}
-                        disabled={currentFighterActionBusy || meta.cloudAccessScope === 'community' || meta.cloudPublic}
-                        onClick={() => setPublishConfirmOpen(true)}
-                      >
-                        Community
-                      </Button>
-                      {meta.cloudPublic && meta.cloudFighterId ? (
-                        <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void sharePublishedFighter()}>
-                          Share Link
-                        </Button>
-                      ) : null}
-                    </>
-                  ) : null}
-                  <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void saveAll()}>
-                    Save All
-                  </Button>
-                  {ownerActionsReady ? (
-                    <>
-                      <Button variant="ghost" disabled={currentFighterActionBusy} onClick={() => renameFighter()}>
-                        Rename
-                      </Button>
-                      <Button variant="danger" disabled={currentFighterActionBusy} onClick={() => deleteFighter()}>
-                        Delete
-                      </Button>
-                    </>
-                  ) : null}
-                </div>
               </div>
             </header>
 
@@ -2109,6 +2029,91 @@ export function GalleryPage({
                   ) : null}
                 </div>
               </div>
+            </section>
+
+            {/* Play and the moving fighter come first; management sits after them. */}
+            <section className="gallery-manage" aria-labelledby="gallery-manage-title">
+              <h3 id="gallery-manage-title" className="gallery-manage__title">Manage</h3>
+            <div className="asf-toolbar">
+              {ownerActionsReady && pendingFighterSync ? (
+                <Button
+                  disabled={currentFighterBusy}
+                  onClick={() => void retryPendingFighterSync(pendingFighterSync)}
+                >
+                  {currentFighterBusy ? 'Syncing Fighter...' : 'Retry Fighter Sync'}
+                </Button>
+              ) : null}
+              {ownerActionsReady && resumableJob ? (
+                <Button
+                  disabled={currentFighterActionBusy || !legalAccepted}
+                  onClick={() => void resumeCloudGeneration(resumableJob)}
+                >
+                  Resume Preserved Work · Free
+                </Button>
+              ) : null}
+              {ownerActionsReady && auraOnly && meta.cloudFighterId ? (
+                <Button variant="primary" disabled={currentFighterActionBusy || !legalAccepted} onClick={() => void quoteFightExpansion()}>
+                  Add Fight + Rush · Check Price
+                </Button>
+              ) : null}
+              {ownerActionsReady ? upgradeOptions.map((tier, index) => (
+                <Button
+                  key={tier.id}
+                  variant={index === 0 ? 'primary' : 'secondary'}
+                  disabled={currentFighterActionBusy || !legalAccepted}
+                  onClick={() => setPendingUpgradeTier(tier.id)}
+                >
+                  Upgrade to {tier.label} · {quoteGenerationPackage(tier.id, 'complete').priceLabel}
+                </Button>
+              )) : null}
+              {ownerActionsReady && hasOutdatedSprites && !hasTemplateAtlases ? (
+                <Button disabled={currentFighterActionBusy} onClick={() => rebuildHd()}>
+                  Rebuild HD · Free
+                </Button>
+              ) : null}
+              {ownerActionsReady ? (
+                <>
+                  <Button disabled={currentFighterActionBusy} onClick={() => void syncCloud()}>
+                    Sync Cloud
+                  </Button>
+                  <Button
+                    variant={sharedWithActiveCrew ? 'primary' : 'secondary'}
+                    disabled={currentFighterActionBusy || sharedWithActiveCrew}
+                    onClick={() => {
+                      if (activeCrew) void updateFighterAccess('crew');
+                      else onOpenCrew?.();
+                    }}
+                  >
+                    {activeCrew ? `Crew · ${activeCrew.name}` : 'Set Up Crew'}
+                  </Button>
+                  <Button
+                    variant={meta.cloudAccessScope === 'community' || meta.cloudPublic ? 'primary' : 'secondary'}
+                    disabled={currentFighterActionBusy || meta.cloudAccessScope === 'community' || meta.cloudPublic}
+                    onClick={() => setPublishConfirmOpen(true)}
+                  >
+                    Community
+                  </Button>
+                  {meta.cloudPublic && meta.cloudFighterId ? (
+                    <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void sharePublishedFighter()}>
+                      Share Link
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+              <Button variant="ghost" disabled={currentFighterBusy} onClick={() => void saveAll()}>
+                Save All
+              </Button>
+              {ownerActionsReady ? (
+                <>
+                  <Button variant="ghost" disabled={currentFighterActionBusy} onClick={() => renameFighter()}>
+                    Rename
+                  </Button>
+                  <Button variant="danger" disabled={currentFighterActionBusy} onClick={() => deleteFighter()}>
+                    Delete
+                  </Button>
+                </>
+              ) : null}
+            </div>
             </section>
 
             {/* Needed only for paid upgrades and retries, so it follows the fighter. */}

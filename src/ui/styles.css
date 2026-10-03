@@ -1367,6 +1367,16 @@
     }
   }
 
+  /* Portrait phones: the 16:9 arena is shorter than its box. Rest it on the
+     touch controls so the spare height sits above it, under the HUD and demo
+     badges, instead of a black band between arena and controls and badges
+     covering the fighters. */
+  @media (pointer: coarse) and (orientation: portrait) {
+    .game-shell.is-combat .game-shell__canvas canvas {
+      @apply object-bottom;
+    }
+  }
+
   .game-shell__gallery-link {
     @apply fixed top-24 right-5 z-40 [@media(pointer:coarse)]:hidden;
   }
@@ -1396,6 +1406,14 @@
     @apply fixed left-1/2 top-[96px] z-40 -translate-x-1/2 rounded-[3px] border-2 border-asf-gold-deep
            bg-[rgba(5,5,12,0.9)] px-3 py-2 font-arcade text-[10px] uppercase
            tracking-[0.08em] text-asf-gold-bright shadow-[0_5px_0_rgba(0,0,0,0.58)];
+  }
+
+  /* Portrait phones: below the exit and pause row, in the free band the
+     arena leaves above itself, never over the fighters. */
+  @media (pointer: coarse) and (orientation: portrait) {
+    .trial-match-badge {
+      @apply top-[118px] whitespace-nowrap;
+    }
   }
 
   .match-actions--trial {
@@ -1816,6 +1834,14 @@
 
   .gallery-stage-layout {
     @apply grid gap-5 grid-cols-[minmax(0,1fr)_340px] max-[1200px]:grid-cols-1;
+  }
+
+  .gallery-manage {
+    @apply mt-5 flex flex-col gap-3;
+  }
+
+  .gallery-manage__title {
+    @apply font-arcade text-xs uppercase tracking-[0.08em] text-asf-cream/70;
   }
 
   .gallery-hero__play {
@@ -5004,7 +5030,7 @@
     .game-shell.is-combat .fight-hud__center { @apply w-14 gap-1; }
     .game-shell.is-combat .fight-hud__timer { @apply text-[20px]; }
     .game-shell.is-combat .fight-hud__match-label { @apply max-w-14 text-[6px]; }
-    .game-shell.is-combat .game-shell__gallery-link { @apply top-16 right-2 block px-3 text-[9px]; }
+    .game-shell.is-combat .game-shell__gallery-link { @apply top-16 right-auto left-2 block px-3 text-[9px]; }
     .game-shell.is-combat .fight-pause-button { @apply top-16; }
   }
 
@@ -5204,6 +5230,27 @@
     .fight-keys__player--touch .fight-keys__row { @apply gap-x-1; }
     .fight-keys__player--touch .fight-keys__actions { @apply gap-1; }
     .fight-keys__player--touch .fight-keys__utility { @apply pl-1; }
+  }
+
+  /* Landscape phones: a cabinet row under the arena left it a 300px strip.
+     The arena takes the whole screen and the controls float over its lower
+     corners, stick left and buttons right, like a handheld fighting game. */
+  @media (pointer: coarse) and (orientation: landscape) {
+    .game-shell.is-combat { @apply grid-rows-[minmax(0,1fr)]; }
+    .game-shell.is-combat .fight-keys--touch {
+      @apply absolute inset-x-0 bottom-0 border-t-0 bg-transparent
+             px-[max(8px,env(safe-area-inset-left))] pb-[max(4px,env(safe-area-inset-bottom))];
+    }
+    .game-shell.is-combat .fight-keys--touch .fight-keys__players { @apply w-full; }
+    .game-shell.is-combat .fight-keys__player--touch {
+      @apply max-w-none border-0 bg-none px-1 pt-0 pb-0 shadow-none;
+    }
+    .game-shell.is-combat .fight-keys__player--touch .fight-keys__fasteners,
+    .game-shell.is-combat .fight-keys__player--touch .fight-keys__player-label,
+    .game-shell.is-combat .fight-keys__player--touch .fight-keys__movement-label,
+    .game-shell.is-combat .fight-keys--touch .fight-keys__tip { @apply hidden; }
+    .game-shell.is-combat .fight-keys__player--touch .fight-keys__cap { @apply opacity-90; }
+    .trial-match-badge { @apply bottom-[max(10px,env(safe-area-inset-bottom))] top-auto; }
   }
 
   @media (max-height: 540px) {

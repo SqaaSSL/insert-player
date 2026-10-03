@@ -528,6 +528,24 @@ function CpuPersonalityControls({ label, personalityId, onChange }: {
   );
 }
 
+/**
+ * The first roster snapshot can hold only the player's own fighters, so the
+ * rival starts as a mirror. Keep a valid rival, but replace a mirror nobody
+ * chose once a real opponent (normally an official) has loaded.
+ */
+export function nextRivalKey({ current, available, playerKey, defaultRivalKey, chosenByPlayer }: {
+  current: string | null;
+  available: readonly string[];
+  playerKey: string | null;
+  defaultRivalKey: string | null;
+  chosenByPlayer: boolean;
+}): string | null {
+  if (!current || !available.includes(current)) return defaultRivalKey;
+  const unchosenMirror = !chosenByPlayer && current === playerKey
+    && defaultRivalKey !== null && defaultRivalKey !== playerKey;
+  return unchosenMirror ? defaultRivalKey : current;
+}
+
 export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateFighter, onStartFight, preferredPlayerPhotoHash = null, activeCrew = null, autoStart = false }: RosterPageProps) {
   const modeMeta = getModeMeta(mode);
   const isAuraMode = mode === 'aura' || mode === 'aura-vs' || mode === 'aura-watch';
@@ -561,6 +579,9 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
   const p1PersonalityExplicitRef = useRef(false);
   const p2PersonalityExplicitRef = useRef(false);
   const p1SelectionExplicitRef = useRef(false);
+  const p2SelectionExplicitRef = useRef(false);
+  const p1KeyRef = useRef<string | null>(null);
+  p1KeyRef.current = p1Key;
   const preparationGuardRef = useRef(createAsyncEpochGuard());
   const preparationAbortRef = useRef<AbortController | null>(null);
   const autoStartConsumedRef = useRef(false);
@@ -596,6 +617,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
     p1PersonalityExplicitRef.current = false;
     p2PersonalityExplicitRef.current = false;
     p1SelectionExplicitRef.current = false;
+    p2SelectionExplicitRef.current = false;
     autoStartConsumedRef.current = false;
   }, [authSessionKey, mode, preferredPlayerPhotoHash]);
 
@@ -686,11 +708,16 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
           ? current
           : firstPlayer?.key ?? null
       ));
-      setP2Key((current) => (
-        current && sections.all.some((entry) => entry.key === current)
-          ? current
-          : firstOpponent?.key ?? null
-      ));
+      const knownP1 = p1KeyRef.current && sections.all.some((entry) => entry.key === p1KeyRef.current)
+        ? p1KeyRef.current : null;
+      const nextP1Key = preferredPlayer?.key ?? knownP1 ?? firstPlayer?.key ?? null;
+      setP2Key((current) => nextRivalKey({
+        current,
+        available: sections.all.map((entry) => entry.key),
+        playerKey: nextP1Key,
+        defaultRivalKey: firstOpponent?.key ?? null,
+        chosenByPlayer: p2SelectionExplicitRef.current,
+      }));
     };
 
     const markAndPublish = () => {
@@ -910,6 +937,7 @@ export function RosterPage({ authStatus, authSessionKey, mode, onBack, onCreateF
       }));
       return;
     }
+    p2SelectionExplicitRef.current = true;
     setP2Key(fighter.key);
     setP2PersonalityId((current) => personalityAfterFighterAssignment({
       current,
