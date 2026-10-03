@@ -1,5 +1,7 @@
 /** Shared public contract. Provider credentials and requests never cross this boundary. */
 export const BATTLE_FINISHER_CREDIT_COST = 1;
+/** The onboarding demo's fatality is on the house, once per account. */
+export const FREE_DEMO_FINISHER_LIMIT = 1;
 export const BATTLE_STILL_MAX_BYTES = 3 * 1024 * 1024;
 export const BATTLE_RECORDING_MAX_BYTES = 64 * 1024 * 1024;
 export interface BattleSummary {
@@ -16,12 +18,16 @@ export interface BattleSummary {
   p2Score?: number;
   rank?: string;
   seed?: number;
+  /** Set only for the onboarding demo match ('trial'). */
+  experience?: 'trial';
 }
 export interface BattleFinisher {
   id: string;
   status: 'queued' | 'generating' | 'ready' | 'failed';
   error?: string;
   creditRefunded: boolean;
+  /** Used the account's free demo fatality rather than a credit. */
+  included?: boolean;
   videoUrl?: string;
 }
 export interface SavedBattle {
@@ -36,4 +42,6 @@ export interface SavedBattle {
   shareUrl: string;
   finisherShareUrl: string;
   ogImageUrl: string;
+  /** True while this battle's fatality would use the account's free demo fatality. */
+  finisherIncluded?: boolean;
 }
