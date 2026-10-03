@@ -78,6 +78,8 @@ beforeAll(async () => {
   await db.prepare('CREATE TABLE IF NOT EXISTS legal_acceptances' + legalSchema.trim().replace(/;$/, '')).run();
   const schema = readFileSync('worker/migrations/0039_battle_finishers.sql', 'utf8').replace(/--[^\n]*/g, '');
   await db.batch(schema.split(';').map(s => s.trim()).filter(Boolean).map(s => db.prepare(s)));
+  const demoFree = readFileSync('worker/migrations/0046_demo_free_finisher.sql', 'utf8').replace(/--[^\n]*/g, '');
+  await db.batch(demoFree.split(';').map(s => s.trim()).filter(Boolean).map(s => db.prepare(s)));
 });
 afterAll(async () => { await mf?.dispose(); });
 beforeEach(async () => {
@@ -138,6 +140,42 @@ describe('durable battle media and credit-backed finishers in D1 and R2', () => 
     expect(new Set(results.map(b => b.finisher?.id)).size).toBe(1); expect(await credits()).toBe(2);
     expect((await db.prepare("SELECT * FROM credit_ledger WHERE delta = -1").all()).results).toHaveLength(1);
     expect((await db.prepare('SELECT * FROM battle_finisher_jobs').all()).results).toHaveLength(1);
+  });
+  it('makes the onboarding demo fatality free exactly once per account', async () => {
+    const demo = await create({ summary: { ...summary, experience: 'trial' } });
+    expect(demo.finisherIncluded).toBe(true);
+    const results = await Promise.all([generate(demo), generate(demo, 'another-request-1234567890')]);
+    expect(new Set(results.map(b => b.finisher?.id)).size).toBe(1);
+    expect(results[0].finisher?.included).toBe(true);
+    expect(await credits()).toBe(3);
+    expect((await db.prepare("SELECT * FROM credit_ledger WHERE reason = 'battle_finisher_demo_free' AND delta = 0").all()).results).toHaveLength(1);
+    expect((await db.prepare("SELECT free_finishers_used FROM users WHERE id = 'owner'").first<{ free_finishers_used: number }>())!.free_finishers_used).toBe(1);
+    // A second demo battle on the same account is a normal paid fatality.
+    const again = await create({ clientBattleId: 'battle-client-0987654321', summary: { ...summary, experience: 'trial' } });
+    expect(again.finisherIncluded).toBeUndefined();
+    await generate(again, 'third-request-1234567890');
+    expect(await credits()).toBe(2);
+  });
+  it('charges a normal battle even while the demo allowance is unused', async () => {
+    const battle = await create();
+    expect(battle.finisherIncluded).toBeUndefined();
+    await generate(battle);
+    expect(await credits()).toBe(2);
+    expect((await db.prepare("SELECT free_finishers_used FROM users WHERE id = 'owner'").first<{ free_finishers_used: number }>())!.free_finishers_used).toBe(0);
+  });
+  it('returns the free demo fatality, not a credit, when it fails', async () => {
+    const demo = await create({ summary: { ...summary, experience: 'trial' } });
+    const id = (await generate(demo)).finisher!.id;
+    await req(`/test/refund/${id}`);
+    expect(await credits()).toBe(3);
+    expect((await db.prepare("SELECT * FROM credit_ledger WHERE reason = 'battle_finisher_refund'").all()).results).toHaveLength(0);
+    expect((await db.prepare("SELECT free_finishers_used FROM users WHERE id = 'owner'").first<{ free_finishers_used: number }>())!.free_finishers_used).toBe(0);
+    const saved = await (await req(`/api/battles/${demo.id}`)).json() as { battle: SavedBattle };
+    expect(saved.battle.finisherIncluded).toBe(true);
+    expect(saved.battle.finisher?.error).toContain('free fatality is still yours');
+  });
+  it('rejects an unknown experience value in a battle summary', async () => {
+    expect((await req('/api/battles', { json: { clientBattleId: 'battle-client-1234567890', summary: { ...summary, experience: 'vip' }, stillBase64: jpeg.toString('base64') } })).status).toBe(400);
   });
   it('rejects insufficient balance server-side without creating a provider job', async () => {
     const battle = await create(); await db.prepare("UPDATE users SET credits_balance = 0 WHERE id = 'owner'").run();

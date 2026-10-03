@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { storeBattleVideo } from './battleVideoStorage';
-import { BATTLE_RECORDING_MAX_BYTES, BATTLE_STILL_MAX_BYTES, type BattleSummary, type SavedBattle } from '../../src/shared/BattleFinisher';
+import { BATTLE_RECORDING_MAX_BYTES, BATTLE_STILL_MAX_BYTES, type BattleSummary, type SavedBattle, FREE_DEMO_FINISHER_LIMIT } from '../../src/shared/BattleFinisher';
 import { generateId } from './auth';
 import { publicFrontendOrigin } from './branding';
 import { readJsonBody, createBoundedRequestStream } from './requestBody';
@@ -17,7 +17,7 @@ export interface BattleRow {
 }
 export interface FinisherJobRow {
   id: string; battle_id: string; owner_user_id: string | null; request_id: string;
-  status: 'queued' | 'submitting' | 'generating' | 'ready' | 'failed'; credit_state: 'reserved' | 'spent' | 'refunded';
+  status: 'queued' | 'submitting' | 'generating' | 'ready' | 'failed'; credit_state: 'reserved' | 'spent' | 'refunded'; free_grant: number;
   model: string; prompt_version: string; provider_attempt_id: string | null; provider_request_id: string | null;
   provider_status_url: string | null; provider_response_url: string | null; provider_cost_cents: number;
   video_sha256: string | null; video_bytes: number | null; error_code: string | null; created_at: string; updated_at: string;
@@ -42,15 +42,24 @@ async function latestJob(env: Env, battleId: string): Promise<FinisherJobRow | n
 function canRead(row: BattleRow | null, userId: string | null): row is BattleRow {
   return Boolean(row && row.status === 'ready' && row.owner_user_id && (row.published || row.owner_user_id === userId));
 }
+async function demoFinisherAvailable(env: Env, row: BattleRow, userId: string | null): Promise<boolean> {
+  if (!userId || row.owner_user_id !== userId) return false;
+  try { if ((JSON.parse(row.summary_json) as BattleSummary).experience !== 'trial') return false; } catch { return false; }
+  const user = await env.DB.prepare('SELECT free_finishers_used FROM users WHERE id = ?').bind(userId).first<{ free_finishers_used: number }>();
+  return Boolean(user && user.free_finishers_used < FREE_DEMO_FINISHER_LIMIT);
+}
 export async function serializeBattle(request: Request, env: Env, row: BattleRow, userId: string | null): Promise<SavedBattle> {
   const api = `${new URL(request.url).origin}/api/battles/${row.id}`;
   const job = await latestJob(env, row.id);
+  const included = (!job || job.status === 'failed') && await demoFinisherAvailable(env, row, userId);
   return { id: row.id, summary: JSON.parse(row.summary_json), createdAt: row.created_at,
     published: Boolean(row.published), isOwner: row.owner_user_id === userId,
     stillUrl: `${api}/still`, ...(row.recording_key ? { recordingUrl: `${api}/recording` } : {}),
     ...(job ? { finisher: { id: job.id, status: job.status === 'submitting' ? 'generating' as const : job.status,
-      creditRefunded: job.credit_state === 'refunded', ...(job.status === 'failed' ? { error: 'Your finisher could not be completed. The credit was returned.' } : {}),
+      creditRefunded: job.credit_state === 'refunded', ...(job.free_grant ? { included: true } : {}),
+      ...(job.status === 'failed' ? { error: job.free_grant ? 'Your finisher could not be completed. Your free fatality is still yours.' : 'Your finisher could not be completed. The credit was returned.' } : {}),
       ...(job.status === 'ready' ? { videoUrl: `${api}/finisher` } : {}) } } : {}),
+    ...(included ? { finisherIncluded: true } : {}),
     shareUrl: `${publicFrontendOrigin(env)}/battles/${row.id}`,
     finisherShareUrl: `${publicFrontendOrigin(env)}/battles/${row.id}/finisher`,
     ogImageUrl: `${new URL(request.url).origin}/share/battles/${row.id}/og.png`,
@@ -79,6 +88,7 @@ export function parseBattleSummary(value: unknown): BattleSummary | null {
       summary[key] = value;
     }
   }
+  if (data.experience !== undefined) { if (data.experience !== 'trial') return null; summary.experience = 'trial'; }
   for (const key of ['stageId', 'rank'] as const) {
     if (data[key] !== undefined) { const value = textField(data[key], key === 'rank' ? 24 : 100); if (!value) return null; summary[key] = value; }
   }
@@ -214,6 +224,29 @@ export async function createBattleFinisher(request: Request, env: Env, auth: Pub
   if (!env.FAL_API_KEY || !env.BATTLE_FINISHER) return battleJson({ error: 'Finishers are temporarily unavailable. No credit was used.' }, 503);
   const limit = await enforceRateLimit(env, 'battle:finisher', auth); if (limit) return limit;
   const jobId = generateId(), now = new Date().toISOString();
+  // The onboarding demo's fatality is free once per account. The batch is one
+  // transaction: the job exists only if the allowance was still unused, and
+  // the allowance is taken only for that job, so two tabs cannot both use it.
+  if (await demoFinisherAvailable(env, battle, auth.userId)) {
+    await env.DB.batch([
+      env.DB.prepare(`INSERT OR IGNORE INTO battle_finisher_jobs (id, battle_id, owner_user_id, request_id, status, credit_state, free_grant, model, prompt_version, created_at, updated_at)
+        SELECT ?, ?, ?, ?, 'queued', 'reserved', 1, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND free_finishers_used < ?)
+        AND EXISTS (SELECT 1 FROM battle_media WHERE id = ? AND owner_user_id = ? AND status = 'ready')`)
+        .bind(jobId, id, auth.userId, body.requestId, FINISHER_MODEL, FINISHER_PROMPT_VERSION, now, now, auth.userId, FREE_DEMO_FINISHER_LIMIT, id, auth.userId),
+      env.DB.prepare(`UPDATE users SET free_finishers_used = free_finishers_used + 1, updated_at = datetime('now')
+        WHERE id = ? AND EXISTS (SELECT 1 FROM battle_finisher_jobs WHERE id = ? AND free_grant = 1)`).bind(auth.userId, jobId),
+      env.DB.prepare(`INSERT INTO credit_ledger (id, user_id, delta, reason, fighter_id)
+        SELECT ?, owner_user_id, 0, 'battle_finisher_demo_free', NULL FROM battle_finisher_jobs WHERE id = ? AND free_grant = 1`).bind(`finisher:${jobId}:free`, jobId),
+      await prepareLegalAcceptance(env, auth, 'intro_video', legal, `battle-finisher:${jobId}`),
+    ]);
+    if (await loadFinisherJob(env, jobId)) {
+      try { await startFinisherWorkflow(env, jobId); } catch { /* maintenance restarts queued work */ }
+      return battleJson({ battle: await serializeBattle(request, env, battle, auth.userId) }, 202);
+    }
+    const concurrent = await latestJob(env, id);
+    if (concurrent && concurrent.status !== 'failed') return battleJson({ battle: await serializeBattle(request, env, battle, auth.userId) });
+    // The allowance went elsewhere in the meantime: fall through to the paid path.
+  }
   // Durable rows and a single ledger marker make two clicks, retries, and two tabs one purchase.
   await env.DB.batch([
     env.DB.prepare(`INSERT OR IGNORE INTO battle_finisher_jobs (id, battle_id, owner_user_id, request_id, status, credit_state, model, prompt_version, created_at, updated_at)
@@ -245,10 +278,13 @@ export async function failFinisher(env: Env, id: string, code: string): Promise<
   await env.DB.batch([
     env.DB.prepare(`INSERT OR IGNORE INTO credit_ledger (id, user_id, delta, reason, fighter_id)
       SELECT ?, job.owner_user_id, 1, 'battle_finisher_refund', NULL FROM battle_finisher_jobs job
-      JOIN users ON users.id = job.owner_user_id WHERE job.id = ? AND job.credit_state = 'reserved' AND job.status <> 'ready'`).bind(refundId, id),
+      JOIN users ON users.id = job.owner_user_id WHERE job.id = ? AND job.credit_state = 'reserved' AND job.free_grant = 0 AND job.status <> 'ready'`).bind(refundId, id),
     env.DB.prepare(`UPDATE users SET credits_balance = credits_balance + 1, updated_at = datetime('now')
-      WHERE id = (SELECT owner_user_id FROM battle_finisher_jobs WHERE id = ? AND credit_state = 'reserved')
+      WHERE id = (SELECT owner_user_id FROM battle_finisher_jobs WHERE id = ? AND credit_state = 'reserved' AND free_grant = 0)
       AND EXISTS (SELECT 1 FROM credit_ledger WHERE id = ?)`).bind(id, refundId),
+    // A failed free demo fatality returns the allowance instead of a credit.
+    env.DB.prepare(`UPDATE users SET free_finishers_used = MAX(free_finishers_used - 1, 0), updated_at = datetime('now')
+      WHERE id = (SELECT owner_user_id FROM battle_finisher_jobs WHERE id = ? AND credit_state = 'reserved' AND free_grant = 1 AND status <> 'ready')`).bind(id),
     env.DB.prepare(`UPDATE battle_finisher_jobs SET status = 'failed', credit_state = 'refunded', error_code = ?, updated_at = ?
       WHERE id = ? AND status <> 'ready' AND credit_state = 'reserved'`).bind(code.slice(0, 100), new Date().toISOString(), id),
   ]);

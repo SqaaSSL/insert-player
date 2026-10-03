@@ -224,7 +224,8 @@ export function GamePage({
         setAuraCapture(null);
       } else if (detail.clientBattleId === battleCaptureId.current) {
         if (detail.state === 'ready') {
-          setBattleCapture(detail.capture);
+          // The demo match carries its flag so its fatality can be the free one.
+          setBattleCapture(trial ? { ...detail.capture, summary: { ...detail.capture.summary, experience: 'trial' } } : detail.capture);
           setBattleCaptureUnavailable(false);
         } else if (detail.state === 'unavailable') setBattleCaptureUnavailable(true);
       }
