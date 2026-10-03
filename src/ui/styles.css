@@ -5232,6 +5232,22 @@
     .fight-keys__player--touch .fight-keys__utility { @apply pl-1; }
   }
 
+  /* Portrait phones: the first outside tester found the controls small.
+     The arena is width-bound in portrait, so the cabinet can grow into the
+     spare height without shrinking the fight: bigger stick cells and caps. */
+  @media (pointer: coarse) and (orientation: portrait) and (min-width: 360px) {
+    .fight-keys__player--touch { @apply px-2 pt-3 pb-4; }
+    .fight-keys__player--touch .fight-keys__stick {
+      @apply grid-cols-[52px_60px_52px] grid-rows-[52px_60px_52px];
+    }
+    .fight-keys__player--touch .fight-keys__direction { @apply size-[52px] text-[24px]; }
+    .fight-keys__touch-stick { @apply size-[60px]; }
+    .fight-keys__player--touch .fight-keys__primary { @apply gap-4; }
+    .fight-keys__player--touch .fight-keys__row { @apply gap-x-3; }
+    .fight-keys__player--touch .fight-keys__cap { @apply size-[60px] text-[11px]; }
+    .fight-keys__player--touch .fight-keys__utility .fight-keys__cap { @apply size-[52px]; }
+  }
+
   /* Landscape phones: a cabinet row under the arena left it a 300px strip.
      The arena takes the whole screen and the controls float over its lower
      corners, stick left and buttons right, like a handheld fighting game. */
