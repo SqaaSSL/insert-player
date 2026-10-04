@@ -5245,6 +5245,8 @@
     .fight-keys__player--touch .fight-keys__primary { @apply gap-4; }
     .fight-keys__player--touch .fight-keys__row { @apply gap-x-3; }
     .fight-keys__player--touch .fight-keys__cap { @apply size-[60px] text-[11px]; }
+    /* The tappable button must be as wide as the cap the thumb aims at. */
+    .fight-keys__player--touch .fight-keys__primary .fight-keys__button { @apply min-w-[60px]; }
     .fight-keys__player--touch .fight-keys__utility .fight-keys__cap { @apply size-[52px]; }
   }
 
