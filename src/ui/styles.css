@@ -5828,8 +5828,9 @@
     top: 72px !important; bottom: 12px !important;
     display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto;
     align-items: center; justify-items: center; gap: 10px; padding: 12px;
-    /* Tailwind's -translate-x-1/2 centring otherwise survives the production CSS merge. */
-    transform: none !important; translate: none !important;
+    /* Cancel Tailwind's -translate-x-1/2 through its variable: the production
+       minifier folds a plain `translate: none` into `transform` and drops it. */
+    --tw-translate-x: 0 !important;
   }
   /* The start card and the arena already say it is the demo. */
   .trial-match-badge { display: none; }
