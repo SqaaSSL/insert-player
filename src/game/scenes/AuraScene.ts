@@ -45,6 +45,8 @@ import {
   type AuraTurn,
   type AuraSlot,
 } from '../aura/AuraChart.ts';
+import { AURA_FIRST_RUN_DIFFICULTY, createAuraFirstRunChart } from '../aura/AuraFirstRunChart.ts';
+import { isLowPowerDevice } from '../utils/lowPowerDevice.ts';
 import {
   AURA_DEFAULT_LANE_KEYS,
   AURA_LOCAL_P1_LANE_KEYS,
@@ -257,6 +259,7 @@ export class AuraScene extends Phaser.Scene {
   private videoRecorder: AuraVideoRecorder | null = null;
   private captureId = '';
   private captureErrorReported = false;
+  private firstRun = false;
   private cpuPlans: [AuraCpuHit[], AuraCpuHit[]] = [[], []];
   private cpuPlanIndices: [number, number] = [0, 0];
   private fighters!: [Fighter, Fighter];
@@ -519,8 +522,13 @@ export class AuraScene extends Phaser.Scene {
     // Challenges and online duels keep the shared two-bar chart.
     const firstRun = !this.online && !this.matchData.auraChallenge
       && (this.matchData.experience === 'trial' || this.matchData.experience === 'onboarding');
-    this.chart = createAuraChart(this.matchSeed, this.difficultyId, this.track,
-      firstRun ? AURA_FIRST_RUN_COUNT_IN_BEATS : AURA_INITIAL_COUNT_IN_BEATS);
+    this.firstRun = firstRun;
+    // A first duel is gentle: fewer notes, two lanes to start, the widest
+    // timing windows and the weakest CPU. Same song and same fairness rule.
+    if (firstRun) this.difficultyId = AURA_FIRST_RUN_DIFFICULTY;
+    this.chart = firstRun
+      ? createAuraFirstRunChart(this.matchSeed, this.track, AURA_FIRST_RUN_COUNT_IN_BEATS)
+      : createAuraChart(this.matchSeed, this.difficultyId, this.track, AURA_INITIAL_COUNT_IN_BEATS);
     this.battle = new AuraBattle(this.chart, this.difficultyId);
     this.captureId = crypto.randomUUID();
     this.emitCapture({ id: this.captureId, state: 'preparing' });
@@ -673,16 +681,24 @@ export class AuraScene extends Phaser.Scene {
       if (!this.isCurrentLifecycle(epoch)) return;
     }
     if (!await this.waitForPresentationFrames() || !this.isCurrentLifecycle(epoch)) return;
-    this.videoRecorder = new AuraVideoRecorder();
-    const audioTracks = this.silentStartup ? [] : this.soundManager.getRecordingAudioTracks();
-    const capture = this.videoRecorder.start(this.game.canvas, audioTracks, audioTracks.length > 0);
-    if (this.paused) this.videoRecorder.pause();
-    const recordingStarted = capture.ok && await this.videoRecorder.whenStarted();
-    if (!this.isCurrentLifecycle(epoch)) return;
-    this.captureErrorReported = !recordingStarted;
-    this.emitCapture(recordingStarted
-      ? { id: this.captureId, state: 'recording' }
-      : { id: this.captureId, state: 'unavailable', reason: this.videoRecorder.error ?? capture.reason ?? 'recording-start-failed' });
+    // Recording the canvas (captureStream + MediaRecorder at 5 Mbit/s) costs a
+    // GPU readback and a video encode every frame. On low-power phones it is
+    // what makes the duel stutter, so those devices play without a recording.
+    if (isLowPowerDevice()) {
+      this.captureErrorReported = true;
+      this.emitCapture({ id: this.captureId, state: 'unavailable', reason: 'low-power-device' });
+    } else {
+      this.videoRecorder = new AuraVideoRecorder();
+      const audioTracks = this.silentStartup ? [] : this.soundManager.getRecordingAudioTracks();
+      const capture = this.videoRecorder.start(this.game.canvas, audioTracks, audioTracks.length > 0);
+      if (this.paused) this.videoRecorder.pause();
+      const recordingStarted = capture.ok && await this.videoRecorder.whenStarted();
+      if (!this.isCurrentLifecycle(epoch)) return;
+      this.captureErrorReported = !recordingStarted;
+      this.emitCapture(recordingStarted
+        ? { id: this.captureId, state: 'recording' }
+        : { id: this.captureId, state: 'unavailable', reason: this.videoRecorder.error ?? capture.reason ?? 'recording-start-failed' });
+    }
     // Encoder support never decides whether a player can play the real duel.
     this.startup.begin();
     // The song's existing lead-in and note travel are the recorded introduction.
@@ -2411,7 +2427,7 @@ export class AuraScene extends Phaser.Scene {
       difficulty: this.difficultyId,
       stageId: this.resolvedStageId,
       stageLabel: this.stageLabel,
-      ...(!this.customStageKey ? {
+      ...(!this.customStageKey && !this.firstRun ? {
         challengeRoutine: createAuraChallengeRoutine(this.matchSeed, this.difficultyId, this.track.id, this.resolvedStageId) ?? undefined,
         challengeShareSlots: this.matchData.auraChallenge ? [this.matchData.auraChallenge.slot] : this.online ? [this.online.localSlot]
           : this.cpuVsCpu ? [] : this.isVsAI ? [0] : [0, 1],
