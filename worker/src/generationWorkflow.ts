@@ -1,4 +1,5 @@
 import { AURA_GENERATION_ANIMATIONS } from '../../src/services/GenerationPackages';
+import { isVideoSpriteExtraAction } from '../../src/services/VideoSpriteCompileContract';
 import { storedGenerationAnimationNames } from './generationPackages';
 import { storedGenerationRenderer } from './templateGenerationPolicy';
 import { assertCompiledTemplateSprite, assertCompiledTemplatePng, assertCompiledTemplateSources } from './templateAtlasValidation';
@@ -250,7 +251,10 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     step: WorkflowStep,
   ): Promise<void> {
     let sources: GenerationSources;
-    if (job.operation === 'fighter_generation') {
+    // An extra special move for a reviewed Champion reuses its sealed sources.
+    const reviewedExtra = job.operation === 'fighter_retry_animation'
+      && job.target_kind === 'animation' && isVideoSpriteExtraAction(job.target_name);
+    if (job.operation === 'fighter_generation' || reviewedExtra) {
       let reviewedSources: SealedReviewedCanonicalSources | null;
       try {
         reviewedSources = parseSealedReviewedCanonicalSources(artifactRun.source_manifest_json);
@@ -259,6 +263,9 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
           throw new NonRetryableError(error.message);
         }
         throw error;
+      }
+      if (reviewedExtra && !reviewedSources) {
+        throw new NonRetryableError('An extra Video move requires sealed reviewed canonical sources');
       }
       if (reviewedSources) {
         if (reviewedSources.fighterId !== job.fighter_id || reviewedSources.ownerUserId !== job.user_id) {

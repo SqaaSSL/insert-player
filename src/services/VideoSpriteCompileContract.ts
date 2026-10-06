@@ -27,13 +27,29 @@ export const VIDEO_SPRITE_ACTIONS = [
 ] as const;
 
 export type VideoSpriteAction = typeof VIDEO_SPRITE_ACTIONS[number];
+
+/**
+ * Special moves an existing reviewed Champion can gain one at a time, after
+ * its full 11-action run. They are never part of a full run: the ordered
+ * VIDEO_SPRITE_ACTIONS list above is the full run's exact action set.
+ */
+export const VIDEO_SPRITE_EXTRA_ACTIONS = ['fireball', 'uppercut'] as const;
+export type VideoSpriteExtraAction = typeof VIDEO_SPRITE_EXTRA_ACTIONS[number];
+
+/** Everything the compiler can compile: the full-run set plus the extras. */
+export const VIDEO_SPRITE_COMPILABLE_ACTIONS = [...VIDEO_SPRITE_ACTIONS, ...VIDEO_SPRITE_EXTRA_ACTIONS] as const;
+export type VideoSpriteCompilableAction = typeof VIDEO_SPRITE_COMPILABLE_ACTIONS[number];
+
+export function isVideoSpriteExtraAction(value: unknown): value is VideoSpriteExtraAction {
+  return typeof value === 'string' && (VIDEO_SPRITE_EXTRA_ACTIONS as readonly string[]).includes(value);
+}
 export type VideoSpriteSequenceFormat = 'loop' | 'forward-ping-pong' | 'timeline-hold';
 export type VideoSpriteFacing = 'left' | 'right';
 /** A technical gate result only. No outcome authorizes semantic promotion. */
 export type VideoSpriteDecision = 'technical_pass' | 'needs_review' | 'reject';
 
 export interface VideoSpriteActionProfile {
-  action: VideoSpriteAction;
+  action: VideoSpriteCompilableAction;
   uniqueFrameCount: number;
   sequenceFormat: VideoSpriteSequenceFormat;
   allowStatic: boolean;
@@ -46,7 +62,7 @@ export interface VideoSpriteActionProfile {
   minReviewTotalMotion: number;
 }
 
-export const VIDEO_SPRITE_ACTION_PROFILES: Readonly<Record<VideoSpriteAction, VideoSpriteActionProfile>> =
+export const VIDEO_SPRITE_ACTION_PROFILES: Readonly<Record<VideoSpriteCompilableAction, VideoSpriteActionProfile>> =
   Object.freeze({
     idle: {
       action: 'idle', uniqueFrameCount: 8, sequenceFormat: 'loop', allowStatic: true, registration: 'root',
@@ -114,6 +130,20 @@ export const VIDEO_SPRITE_ACTION_PROFILES: Readonly<Record<VideoSpriteAction, Vi
       maxReviewScaleStepRatio: 0.22, maxReviewMotionStep: 0.42,
       maxReviewLoopSeam: null, minReviewTotalMotion: 0.05,
     },
+    // Extras: a two-handed forward projectile throw held at release, and a
+    // rising punch that leaves the ground (registered on the vertical root).
+    fireball: {
+      action: 'fireball', uniqueFrameCount: 8, sequenceFormat: 'timeline-hold', allowStatic: false, registration: 'root',
+      maxReviewTranslationXRatio: 0.24, maxReviewTranslationYRatio: 0.22,
+      maxReviewScaleStepRatio: 0.22, maxReviewMotionStep: 0.40,
+      maxReviewLoopSeam: null, minReviewTotalMotion: 0.05,
+    },
+    uppercut: {
+      action: 'uppercut', uniqueFrameCount: 8, sequenceFormat: 'timeline-hold', allowStatic: false, registration: 'vertical-root',
+      maxReviewTranslationXRatio: 0.24, maxReviewTranslationYRatio: 0.40,
+      maxReviewScaleStepRatio: 0.24, maxReviewMotionStep: 0.45,
+      maxReviewLoopSeam: null, minReviewTotalMotion: 0.06,
+    },
   });
 
 export interface VideoSpriteLineage {
@@ -130,7 +160,7 @@ export interface VideoSpriteLineage {
 
 export interface VideoSpriteCompileRequest {
   schemaVersion: typeof VIDEO_SPRITE_COMPILE_SCHEMA_VERSION;
-  action: VideoSpriteAction;
+  action: VideoSpriteCompilableAction;
   expectedFacing: VideoSpriteFacing;
   videoBase64: string;
   canonicalFrameBase64: string;
@@ -161,7 +191,7 @@ export interface VideoSpriteCompileResponse {
     compilerVersion: string;
     policyVersion: string;
     reportSha256: string;
-    action: VideoSpriteAction;
+    action: VideoSpriteCompilableAction;
     expectedFacing: VideoSpriteFacing;
     decision: {
       outcome: VideoSpriteDecision;

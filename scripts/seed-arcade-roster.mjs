@@ -40,6 +40,9 @@ const postApprovedRecurationArg = rawArgs.find((arg) => arg.startsWith('--post-a
 const recurationDescriptorArg = rawArgs.find((arg) => arg.startsWith('--recuration-descriptor='));
 const recurationDescriptorSha256Arg = rawArgs.find((arg) => arg.startsWith('--recuration-descriptor-sha256='));
 const recurationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-recuration='));
+const videoExtraAnimationArg = rawArgs.find((arg) => arg.startsWith('--video-extra-animation='));
+const videoExtraConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-video-extra='));
+const reviewedVideoExtraJobIdArg = rawArgs.find((arg) => arg.startsWith('--reviewed-video-extra-job-id='));
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
@@ -71,15 +74,23 @@ const recurationDescriptorSha256 = recurationDescriptorSha256Arg
   ?.slice('--recuration-descriptor-sha256='.length) ?? '';
 const recurationConfirmation = recurationConfirmationArg
   ?.slice('--confirm-recuration='.length) ?? '';
+const videoExtraAnimation = videoExtraAnimationArg?.slice('--video-extra-animation='.length) ?? '';
+const videoExtraConfirmation = videoExtraConfirmationArg?.slice('--confirm-video-extra='.length) ?? '';
+const reviewedVideoExtraJobId = reviewedVideoExtraJobIdArg?.slice('--reviewed-video-extra-job-id='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const activateDraft = args.has('--activate-draft');
 const activateReviewed = args.has('--activate-reviewed');
 const videoStep = args.has('--video-step');
+const videoExtraStep = videoExtraAnimation.length > 0;
+const activateReviewedExtra = args.has('--activate-reviewed-extra');
+const rollbackReviewedExtra = args.has('--rollback-reviewed-extra');
+const reviewedExtraOperation = videoExtraStep || activateReviewedExtra || rollbackReviewedExtra;
 const videoReviewInspect = args.has('--video-review-inspect');
 const videoReview = videoReviewDecision.length > 0 || videoReviewInspect;
 const postApprovedRecurationOperation = postApprovedRecuration.length > 0;
-const reviewedVideoOperation = activateReviewed || videoStep || videoReview || postApprovedRecurationOperation;
+const reviewedVideoOperation = activateReviewed || videoStep || videoReview || postApprovedRecurationOperation
+  || reviewedExtraOperation;
 const pinnedProductionOperation = reviewedVideoOperation || activateDraft;
 const acceptRecurationNeedsReview = args.has('--accept-needs-review');
 const continueOnError = args.has('--continue-on-error');
@@ -130,6 +141,28 @@ export const REVIEW_GATED_VIDEO_ACTIONS = Object.freeze([
   'victory',
 ]);
 const REVIEW_GATED_VIDEO_ACTION_SET = new Set(REVIEW_GATED_VIDEO_ACTIONS);
+/**
+ * Extra special moves an active reviewed Champion can gain one at a time
+ * (never part of the 11-action run). Mirrors VIDEO_SPRITE_EXTRA_ACTIONS.
+ */
+export const REVIEW_GATED_VIDEO_EXTRA_ACTIONS = Object.freeze(['fireball', 'uppercut']);
+const REVIEW_GATED_VIDEO_EXTRA_ACTION_SET = new Set(REVIEW_GATED_VIDEO_EXTRA_ACTIONS);
+export const REVIEW_GATED_VIDEO_EXTRA_CONFIRMATION = 'START_REVIEW_GATED_VIDEO_EXTRA_ANIMATION';
+export const REVIEWED_ARCADE_EXTRA_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_EXTRA_ANIMATION';
+export const REVIEWED_ARCADE_EXTRA_ROLLBACK_CONFIRMATION = 'ROLLBACK_REVIEWED_ARCADE_EXTRA_ANIMATION';
+
+export function isReviewGatedVideoExtraJob(job) {
+  return job?.operation === 'fighter_retry_animation' && job?.targetKind === 'animation'
+    && REVIEW_GATED_VIDEO_EXTRA_ACTION_SET.has(job?.targetName);
+}
+
+function reviewGatedVideoSequenceOrder(action) {
+  return REVIEW_GATED_VIDEO_ACTION_SET.has(action)
+    ? REVIEW_GATED_VIDEO_ACTIONS.indexOf(action)
+    : REVIEW_GATED_VIDEO_EXTRA_ACTION_SET.has(action)
+      ? REVIEW_GATED_VIDEO_ACTIONS.length + REVIEW_GATED_VIDEO_EXTRA_ACTIONS.indexOf(action)
+      : -1;
+}
 const CANONICAL_SOURCE_NAMES = ['side', 'upright', 'crouch'];
 const CANONICAL_SOURCES = new Set(CANONICAL_SOURCE_NAMES);
 export const REVIEWED_ARCADE_ACTIVATION_CONFIRMATION = 'ACTIVATE_REVIEWED_ARCADE_FIGHTER_PRODUCTION';
@@ -428,6 +461,24 @@ export function assertReviewGatedVideoReviewConfirmation(decision, value) {
   }
 }
 
+export function assertReviewGatedVideoExtraConfirmation(animation, value) {
+  if (!REVIEW_GATED_VIDEO_EXTRA_ACTION_SET.has(animation)) {
+    throw new Error(`--video-extra-animation must be one of ${REVIEW_GATED_VIDEO_EXTRA_ACTIONS.join(', ')}.`);
+  }
+  if (value !== REVIEW_GATED_VIDEO_EXTRA_CONFIRMATION) {
+    throw new Error(`Review-gated extra Video move requires --confirm-video-extra=${REVIEW_GATED_VIDEO_EXTRA_CONFIRMATION}.`);
+  }
+}
+
+export function assertReviewedExtraActivationConfirmation(operation, value) {
+  const expected = operation === 'rollback'
+    ? REVIEWED_ARCADE_EXTRA_ROLLBACK_CONFIRMATION
+    : REVIEWED_ARCADE_EXTRA_ACTIVATION_CONFIRMATION;
+  if (value !== expected) {
+    throw new Error(`Reviewed extra Video move ${operation} requires --confirm-activation=${expected}.`);
+  }
+}
+
 export function assertPostApprovedRecurationConfirmation(operation, value) {
   const expected = POST_APPROVED_RECURATION_CONFIRMATIONS[operation];
   if (!expected || value !== expected) {
@@ -625,6 +676,20 @@ function selectFighters(manifest) {
   if (postApprovedRecurationOperation && !['stage', 'promote', 'rollback'].includes(postApprovedRecuration)) {
     throw new Error('--post-approved-recuration must be stage, promote, or rollback.');
   }
+  if (reviewedExtraOperation && (
+    [videoExtraStep, activateReviewedExtra, rollbackReviewedExtra].filter(Boolean).length !== 1
+    || dryRun || all || resume || restartDraft || registerDraft || prepareCanary || canarySide || probeSide
+    || activate || activateDraft || activateReviewed || videoStep || videoReview || postApprovedRecurationOperation
+    || animationName || sourceName || !slugArg
+  )) {
+    throw new Error(
+      'Extra Video move operations (--video-extra-animation, --activate-reviewed-extra, --rollback-reviewed-extra) '
+      + 'require one --slug and cannot be combined with each other or any other operation.',
+    );
+  }
+  if (reviewedVideoExtraJobId && !activateReviewedExtra && !rollbackReviewedExtra) {
+    throw new Error('--reviewed-video-extra-job-id is supported only with --activate-reviewed-extra or --rollback-reviewed-extra.');
+  }
   if (resumeVideoRunFrom && restartVideoRunFrom) {
     throw new Error('Choose exactly one of --resume-video-run-from or --restart-video-run-from.');
   }
@@ -646,11 +711,11 @@ function selectFighters(manifest) {
   if (videoReviewDecision === 'adjust' && !videoReviewExportDir) {
     throw new Error('Video review adjust requires a private export destination for the new revision.');
   }
-  if (reviewedManifestRunId && !videoStep && !videoReview) {
+  if (reviewedManifestRunId && !videoStep && !videoReview && !videoExtraStep) {
     throw new Error('--reviewed-manifest-run-id requires a review-gated Video operation.');
   }
-  if (reviewedCanonicalManifestPath && !videoStep && !videoReview) {
-    throw new Error('--reviewed-canonical-manifest is supported only with --video-step or --video-review-decision.');
+  if (reviewedCanonicalManifestPath && !videoStep && !videoReview && !videoExtraStep) {
+    throw new Error('--reviewed-canonical-manifest is supported only with --video-step, --video-extra-animation or --video-review-decision.');
   }
   if (reviewedVideoFinalJobId && !activateReviewed) {
     throw new Error('--reviewed-video-final-job-id is supported only with --activate-reviewed.');
@@ -1425,23 +1490,47 @@ export function assertReviewGatedVideoDraft({
   return { fighterId: entry.fighterId };
 }
 
+/** An extra move targets the live official Champion, so visibility/status differ from a draft. */
+export function assertReviewGatedVideoExtraFighter({ manifest, fighter, entry, owned, approvedPhotoHash }) {
+  if (!entry || !/^[a-f0-9]{32}$/.test(entry.fighterId ?? '')) {
+    throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
+  }
+  const mismatches = [
+    entry.slug === fighter.slug ? null : 'slug',
+    entry.fighterName === fighter.name ? null : 'name',
+    entry.qualityTier === 'champion' ? null : 'tier',
+    entry.status === 'active' || entry.status === 'draft' ? null : 'status',
+  ].filter(Boolean);
+  if (mismatches.length > 0) {
+    throw new Error(`${fighter.name} is not the reviewed Champion from the roster manifest: ${mismatches.join(', ')}.`);
+  }
+  if (approvedPhotoHash !== fighterReference(manifest, fighter).sourceSha256) {
+    throw new Error(`${fighter.name} approved local source hash does not match the roster manifest.`);
+  }
+  if (!owned || owned.id !== entry.fighterId || owned.qualityTier !== 'champion' || owned.photoHash !== approvedPhotoHash) {
+    throw new Error(`${fighter.name} Champion fighter metadata does not match its Arcade entry.`);
+  }
+  return { fighterId: entry.fighterId };
+}
+
 function assertReviewGatedVideoJob(
   job,
   fighterId,
   reviewedCanonicalManifest = null,
-  { allowFullRunRestartRequired = false } = {},
+  { allowFullRunRestartRequired = false, extraMove = '' } = {},
 ) {
   if (!job || !/^[a-f0-9]{32}$/.test(job.id ?? '')) {
     throw new Error('Review-gated Video generation returned an invalid job id.');
   }
+  // A full run has no target; an extra move run targets exactly that one move.
   const mismatches = [
     job.fighterId === fighterId ? null : 'fighter',
     job.tier === 'champion' ? null : 'tier',
     job.creationFlow === 'video' ? null : 'creationFlow',
-    job.operation === 'fighter_generation' ? null : 'operation',
+    job.operation === (extraMove ? 'fighter_retry_animation' : 'fighter_generation') ? null : 'operation',
     /^[a-f0-9]{32}$/.test(job.artifactRunId ?? '') ? null : 'artifactRunId',
-    job.targetKind == null ? null : 'targetKind',
-    job.targetName == null ? null : 'targetName',
+    (extraMove ? job.targetKind === 'animation' : job.targetKind == null) ? null : 'targetKind',
+    (extraMove ? job.targetName === extraMove : job.targetName == null) ? null : 'targetName',
   ].filter(Boolean);
   if (mismatches.length > 0) {
     throw new Error(`Review-gated Video job crossed its sealed scope: ${mismatches.join(', ')}.`);
@@ -1467,7 +1556,8 @@ export function planReviewGatedVideoStep(
   fighterId,
   { resumeFromJobId = '', restartFromJobId = '' } = {},
 ) {
-  const fighterJobs = (Array.isArray(jobs) ? jobs : []).filter((job) => job?.fighterId === fighterId);
+  const fighterJobs = (Array.isArray(jobs) ? jobs : [])
+    .filter((job) => job?.fighterId === fighterId && !isReviewGatedVideoExtraJob(job));
   const recoveryOperation = resumeFromJobId
     ? 'resume-failed'
     : restartFromJobId
@@ -1571,8 +1661,10 @@ export function assertAwaitingVideoReview(review, job) {
     !/^[a-f0-9]{32}$/.test(review.candidateId ?? '') ||
     !Number.isInteger(review.revision) || review.revision < 1 ||
     !/^[a-f0-9]{64}$/.test(review.reportSha256 ?? '') ||
-    !REVIEW_GATED_VIDEO_ACTION_SET.has(review.action) ||
-    review.sequenceOrder !== REVIEW_GATED_VIDEO_ACTIONS.indexOf(review.action) ||
+    (isReviewGatedVideoExtraJob(job)
+      ? review.action !== job.targetName
+      : !REVIEW_GATED_VIDEO_ACTION_SET.has(review.action)) ||
+    review.sequenceOrder !== reviewGatedVideoSequenceOrder(review.action) ||
     review.status !== 'awaiting_review' ||
     !['technical_pass', 'needs_review', 'reject'].includes(review.technicalOutcome)
   ) {
@@ -1680,7 +1772,13 @@ export async function runReviewGatedVideoDecision({
     token,
     `/api/fighters/${encodeURIComponent(entry.fighterId)}`,
   );
-  const { fighterId } = assertReviewGatedVideoDraft({
+  const jobBody = await requestApi(
+    baseUrl,
+    token,
+    `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+  );
+  const extraMove = isReviewGatedVideoExtraJob(jobBody.job) ? jobBody.job.targetName : '';
+  const { fighterId } = (extraMove ? assertReviewGatedVideoExtraFighter : assertReviewGatedVideoDraft)({
     manifest,
     fighter,
     entry,
@@ -1692,12 +1790,7 @@ export async function runReviewGatedVideoDecision({
     fighterId,
     photoHash: approvedPhotoHash,
   });
-  const jobBody = await requestApi(
-    baseUrl,
-    token,
-    `/api/generation-jobs/${encodeURIComponent(jobId)}`,
-  );
-  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest);
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest, { extraMove });
   if (job.id !== jobId) throw new Error('Video review job identity changed before mutation.');
   const reviewPath = `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`;
   const reviewBody = await requestApi(baseUrl, token, reviewPath);
@@ -1745,7 +1838,7 @@ export async function runReviewGatedVideoDecision({
     || updated.revision !== exactRevision
     || updated.reportSha256 !== reportSha256
     || JSON.stringify(updated.selectedVideoIndices) !== JSON.stringify(requestedIndices)
-    || updated.continuationAvailable !== (review.action !== 'victory')
+    || updated.continuationAvailable !== (!isReviewGatedVideoExtraJob(job) && review.action !== 'victory')
   )) {
     throw new Error('Video approval response did not preserve the exact bound revision.');
   }
@@ -1831,16 +1924,17 @@ export async function runReviewGatedVideoInspection({
   const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
   if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
   const detail = await requestApi(baseUrl, token, `/api/fighters/${encodeURIComponent(entry.fighterId)}`);
-  const { fighterId } = assertReviewGatedVideoDraft({
+  const jobBody = await requestApi(
+    baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}`,
+  );
+  const extraMove = isReviewGatedVideoExtraJob(jobBody.job) ? jobBody.job.targetName : '';
+  const { fighterId } = (extraMove ? assertReviewGatedVideoExtraFighter : assertReviewGatedVideoDraft)({
     manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
   });
   assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
     slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
   });
-  const jobBody = await requestApi(
-    baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}`,
-  );
-  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest);
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest, { extraMove });
   if (job.id !== jobId) throw new Error('Video review job identity changed before inspection.');
   const reviewBody = await requestApi(
     baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`,
@@ -2790,12 +2884,13 @@ async function waitForAwaitingVideoReview({
   pollIntervalMs,
   jobTimeoutMs,
   reviewedCanonicalManifest,
+  extraMove = '',
 }) {
   const startedAt = Date.now();
   let job = initialJob;
   let lastStage = '';
   while (Date.now() - startedAt < jobTimeoutMs) {
-    assertReviewGatedVideoJob(job, fighterId, reviewedCanonicalManifest);
+    assertReviewGatedVideoJob(job, fighterId, reviewedCanonicalManifest, { extraMove });
     const stage = `${job.status}:${job.reviewStatus ?? 'none'}:${job.stage}:${job.progressCurrent}/${job.progressTotal}`;
     if (stage !== lastStage) {
       console.log(`  ${fighter.name}: ${stage}`);
@@ -2824,6 +2919,125 @@ async function waitForAwaitingVideoReview({
     job = refreshed.job;
   }
   throw new Error(`${fighter.name} Video generation exceeded the two-hour safety timeout.`);
+}
+
+/**
+ * Start (or report) ONE review-gated extra move for an active reviewed
+ * Champion, wait until its single candidate awaits review, and print the
+ * exact binding for the existing --video-review-inspect / --video-review-decision
+ * commands. Nothing is published; activation is a separate confirmed step.
+ */
+export async function runReviewGatedVideoExtraStep({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  animation,
+  reviewedCanonicalManifest,
+  requestApi = apiRequest,
+  pause = sleep,
+  pollIntervalMs = POLL_INTERVAL_MS,
+  jobTimeoutMs = JOB_TIMEOUT_MS,
+}) {
+  if (!REVIEW_GATED_VIDEO_EXTRA_ACTION_SET.has(animation)) {
+    throw new Error(`Unsupported extra Video move: ${animation}`);
+  }
+  if (!reviewedCanonicalManifest) {
+    throw new Error('An extra Video move requires the exact separately reviewed canonical manifest.');
+  }
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  const detail = entry
+    ? await requestApi(baseUrl, token, `/api/fighters/${encodeURIComponent(entry.fighterId)}`)
+    : {};
+  const { fighterId } = assertReviewGatedVideoExtraFighter({
+    manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
+  });
+  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+    slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+  });
+  const listed = await requestApi(baseUrl, token, `/api/generation-jobs?fighterId=${encodeURIComponent(fighterId)}`);
+  if (!Array.isArray(listed.jobs)) throw new Error('Generation job listing is unavailable; nothing was started.');
+  const sameMove = listed.jobs.filter((job) => job?.fighterId === fighterId
+    && isReviewGatedVideoExtraJob(job) && job.targetName === animation);
+  const pending = sameMove.find((job) => job.status === 'queued' || job.status === 'running'
+    || (job.status === 'succeeded' && job.reviewStatus === 'awaiting_review'));
+  let job;
+  let mode;
+  if (pending) {
+    job = assertReviewGatedVideoJob(pending, fighterId, reviewedCanonicalManifest, { extraMove: animation });
+    mode = pending.reviewStatus === 'awaiting_review' ? 'reused-review' : 'resumed-poll';
+  } else {
+    const started = await requestApi(
+      baseUrl,
+      token,
+      `/api/admin/arcade/${encodeURIComponent(fighterId)}/video-extra/generate/${encodeURIComponent(animation)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          legal: generationLegal(manifest),
+          canonicalSourceMode: reviewedCanonicalManifest.canonicalSourceMode,
+          canonicalSourceHashes: reviewedCanonicalManifest.canonicalSourceHashes,
+        }),
+      },
+    );
+    if (!started.job) throw new Error(`${fighter.name} extra Video endpoint returned no job; nothing else was attempted.`);
+    job = assertReviewGatedVideoJob(started.job, fighterId, reviewedCanonicalManifest, { extraMove: animation });
+    mode = 'started';
+  }
+  console.log(`  video-extra-job: ${JSON.stringify({ fighter: fighter.slug, animation, mode, jobId: job.id, artifactRunId: job.artifactRunId })}`);
+  if (mode !== 'reused-review') {
+    job = await waitForAwaitingVideoReview({
+      baseUrl, token, fighter, fighterId, initialJob: job, requestApi, pause, pollIntervalMs, jobTimeoutMs,
+      reviewedCanonicalManifest, extraMove: animation,
+    });
+  }
+  const reviewBody = await requestApi(baseUrl, token, `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review`);
+  const review = assertAwaitingVideoReview(reviewBody.review, job);
+  printAwaitingVideoReview(fighter, review, mode);
+  return { mode, job, review };
+}
+
+/** Publish (or unpublish) exactly one approved extra move on the live fighter. */
+export async function setReviewedArcadeExtraPublication({
+  manifest,
+  fighter,
+  approvedPhotoHash,
+  baseUrl,
+  token,
+  jobId,
+  operation,
+  requestApi = apiRequest,
+}) {
+  exactVideoJobId(jobId, 'Reviewed extra Video job id');
+  if (!['activate', 'rollback'].includes(operation)) throw new Error('Extra move publication must be activate or rollback.');
+  const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
+  const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
+  const detail = entry
+    ? await requestApi(baseUrl, token, `/api/fighters/${encodeURIComponent(entry.fighterId)}`)
+    : {};
+  const { fighterId } = assertReviewGatedVideoExtraFighter({
+    manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
+  });
+  const jobBody = await requestApi(baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}`);
+  if (!isReviewGatedVideoExtraJob(jobBody.job)) throw new Error(`Job ${jobId} is not a review-gated extra Video move.`);
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, null, { extraMove: jobBody.job.targetName });
+  if (job.status !== 'succeeded' || job.reviewStatus !== 'approved') {
+    throw new Error(`Extra Video move ${jobId} is not approved; nothing was ${operation === 'activate' ? 'published' : 'removed'}.`);
+  }
+  const result = await requestApi(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${encodeURIComponent(fighterId)}/video-extra/${operation}`,
+    { method: 'POST', body: JSON.stringify({ jobId }) },
+  );
+  if (result.fighterId !== fighterId || result.animation !== job.targetName || result.jobId !== jobId
+    || result.published !== (operation === 'activate')) {
+    throw new Error(`Extra Video move ${operation} response did not match the exact approved job.`);
+  }
+  console.log(`  video-extra-${operation}: ${JSON.stringify(result)}`);
+  return result;
 }
 
 export async function runReviewGatedVideoStep({
@@ -3591,6 +3805,14 @@ async function main() {
     }
   }
   if (activateReviewed) assertReviewedVideoFinalJobId(reviewedVideoFinalJobId);
+  if (videoExtraStep) assertReviewGatedVideoExtraConfirmation(videoExtraAnimation, videoExtraConfirmation);
+  if (activateReviewedExtra || rollbackReviewedExtra) {
+    assertReviewedExtraActivationConfirmation(activateReviewedExtra ? 'activate' : 'rollback', activationConfirmation);
+    exactVideoJobId(reviewedVideoExtraJobId, '--reviewed-video-extra-job-id');
+  }
+  if (target === 'production' && videoExtraStep && !reviewedCanonicalManifestPath) {
+    throw new Error('Production extra Video moves require --reviewed-canonical-manifest from a separately reviewed run.');
+  }
   if (target === 'production' && (videoStep || videoReview) && !reviewedCanonicalManifestPath) {
     throw new Error(
       'Production review-gated Video operations require --reviewed-canonical-manifest from a separately reviewed run.',
@@ -3623,10 +3845,10 @@ async function main() {
     }
     return;
   }
-  const reviewedActivationPhotoHash = activateReviewed || activateDraft
+  const reviewedActivationPhotoHash = activateReviewed || activateDraft || activateReviewedExtra || rollbackReviewedExtra
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
-  const reviewGatedVideoPhotoHash = videoStep || videoReview
+  const reviewGatedVideoPhotoHash = videoStep || videoReview || videoExtraStep
     ? readApprovedSource(manifest, selected[0]).photoHash
     : '';
   const reviewedCanonicalManifest = reviewedCanonicalManifestPath
@@ -3722,6 +3944,32 @@ async function main() {
         '  cache-purge: no integration configured; exact private/public cache-busted byte smokes passed instead.',
       );
     }
+    return;
+  }
+
+  if (videoExtraStep) {
+    await runReviewGatedVideoExtraStep({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewGatedVideoPhotoHash,
+      baseUrl,
+      token,
+      animation: videoExtraAnimation,
+      reviewedCanonicalManifest,
+    });
+    return;
+  }
+
+  if (activateReviewedExtra || rollbackReviewedExtra) {
+    await setReviewedArcadeExtraPublication({
+      manifest,
+      fighter: selected[0],
+      approvedPhotoHash: reviewedActivationPhotoHash,
+      baseUrl,
+      token,
+      jobId: reviewedVideoExtraJobId,
+      operation: activateReviewedExtra ? 'activate' : 'rollback',
+    });
     return;
   }
 

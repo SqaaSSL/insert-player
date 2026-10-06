@@ -9,7 +9,10 @@ import { stripTrailingSlashes } from './url';
 import {
   DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
   VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_COMPILABLE_ACTIONS,
+  isVideoSpriteExtraAction,
   type VideoSpriteAction,
+  type VideoSpriteCompilableAction,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
 import {
@@ -243,8 +246,24 @@ export async function downloadPixcliAuditAsset(
 export async function nextVideoSpriteAction(
   env: Env,
   job: GenerationJob,
-): Promise<VideoSpriteAction> {
+): Promise<VideoSpriteCompilableAction> {
   if (!job.artifact_run_id) throw new NonRetryableError('Video generation artifact run is unavailable');
+  if (job.operation === 'fighter_retry_animation' && job.target_kind === 'animation'
+    && isVideoSpriteExtraAction(job.target_name)) {
+    // One extra move per run: its only candidate is this job's target.
+    const existing = await env.DB.prepare(`
+      SELECT job_id, action, status FROM video_sprite_candidates WHERE run_id = ? ORDER BY sequence_order ASC
+    `).bind(job.artifact_run_id).all<{ job_id: string; action: string; status: string }>();
+    const candidates = existing.results ?? [];
+    if (candidates.some((candidate) => candidate.action !== job.target_name)) {
+      throw new NonRetryableError('An extra Video move run contains an unexpected action');
+    }
+    const current = candidates[0];
+    if (current?.status === 'approved') throw new NonRetryableError('The extra Video move is already approved');
+    if (current?.status === 'rejected') throw new NonRetryableError('A rejected video action requires an explicit retry purchase');
+    if (current && current.job_id !== job.id) throw new NonRetryableError('Another video action is still awaiting review');
+    return job.target_name;
+  }
   if (job.operation !== 'fighter_generation') {
     throw new NonRetryableError('The review-gated video flow supports full fighter generation only');
   }
@@ -282,7 +301,7 @@ export async function nextVideoSpriteAction(
 async function compileAndPersistCandidate(
   env: Env,
   job: GenerationJob,
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
   canonical: VideoWorkflowCanonical,
   prompt: string,
   promptSha256: string,
@@ -434,7 +453,7 @@ async function compileAndPersistCandidate(
   return persistInitialVideoSpriteCandidate(env, {
     job,
     action,
-    sequenceOrder: VIDEO_SPRITE_ACTIONS.indexOf(action),
+    sequenceOrder: VIDEO_SPRITE_COMPILABLE_ACTIONS.indexOf(action),
     pixcliJobId,
     providerRequestId: audit.providerRequestId,
     promptSha256,
@@ -450,7 +469,7 @@ export async function runVideoSpriteAction(
   env: Env,
   step: WorkflowStep,
   job: GenerationJob,
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
   canonical: VideoWorkflowCanonical,
   generationPrompt?: string,
   videoGenerationPolicy: VideoGenerationPolicy = STUDIO_CURATED_VIDEO_POLICY,
@@ -529,7 +548,7 @@ export async function settleVideoSpriteCandidateAwaitingReview(
   env: Env,
   job: GenerationJob,
   candidateId: string,
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
 ): Promise<{ status: 'awaiting_review' }> {
   const settlement = await settleGenerationPurchase(
     env,

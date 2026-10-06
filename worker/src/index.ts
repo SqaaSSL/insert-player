@@ -69,6 +69,11 @@ import {
   startAdminArcadeGeneration,
   startAdminArcadeSourceGeneration,
 } from './arcadeGeneration';
+import {
+  activateAdminArcadeVideoExtra,
+  rollbackAdminArcadeVideoExtra,
+  startAdminArcadeVideoExtraGeneration,
+} from './arcadeVideoExtras';
 import { readDeploymentImageProcessorContract } from './deploymentPreflight';
 import {
   createGenerationJob,
@@ -876,6 +881,31 @@ export default {
               arcadeFighterId,
               sourceName,
             ),
+          ),
+          request,
+          env,
+        );
+      }
+
+      // Review-gated extra special moves for an existing reviewed Champion.
+      const arcadeVideoExtraMatch = path.match(
+        /^\/api\/admin\/arcade\/([^/]+)\/video-extra\/(generate\/([^/]+)|activate|rollback)$/,
+      );
+      if (arcadeVideoExtraMatch && method === 'POST') {
+        const arcadeFighterId = decodePathParam(arcadeVideoExtraMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        const extraAnimation = arcadeVideoExtraMatch[3] ? decodePathParam(arcadeVideoExtraMatch[3]) : null;
+        if (extraAnimation !== null && isResponse(extraAnimation)) return addCors(extraAnimation, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => extraAnimation !== null
+              ? startAdminArcadeVideoExtraGeneration(request, env, auth, arcadeFighterId, extraAnimation)
+              : arcadeVideoExtraMatch[2] === 'activate'
+                ? activateAdminArcadeVideoExtra(request, env, auth, arcadeFighterId)
+                : rollbackAdminArcadeVideoExtra(request, env, auth, arcadeFighterId),
           ),
           request,
           env,

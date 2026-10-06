@@ -1,10 +1,10 @@
 import {
   DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY,
-  VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_COMPILABLE_ACTIONS,
   VIDEO_SPRITE_ACTION_PROFILES,
   VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICIES,
   VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
-  type VideoSpriteAction,
+  type VideoSpriteCompilableAction,
   type VideoSpriteAutomaticSelectionPolicy,
   type VideoSpriteCompileRequest,
   type VideoSpriteLineage,
@@ -83,7 +83,7 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
   if (value.schemaVersion !== VIDEO_SPRITE_COMPILE_SCHEMA_VERSION) {
     throw new VideoSpriteCompileError('unsupported_schema', 'Unsupported video sprite request schema.', 400);
   }
-  if (typeof value.action !== 'string' || !VIDEO_SPRITE_ACTIONS.includes(value.action as VideoSpriteAction)) {
+  if (typeof value.action !== 'string' || !VIDEO_SPRITE_COMPILABLE_ACTIONS.includes(value.action as VideoSpriteCompilableAction)) {
     throw new VideoSpriteCompileError('invalid_action', 'Unsupported video sprite action.', 400);
   }
   const expectedFacing = value.expectedFacing ?? 'right';
@@ -94,7 +94,7 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
   // after the validated request crosses the internal service boundary.
   decodeStrictBase64(value.videoBase64, 'videoBase64', MAX_VIDEO_BYTES);
   decodeStrictBase64(value.canonicalFrameBase64, 'canonicalFrameBase64', MAX_CANONICAL_BYTES);
-  const profile = VIDEO_SPRITE_ACTION_PROFILES[value.action as VideoSpriteAction];
+  const profile = VIDEO_SPRITE_ACTION_PROFILES[value.action as VideoSpriteCompilableAction];
   const automaticSelectionPolicy = value.automaticSelectionPolicy ??
     DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY;
   if (
@@ -132,7 +132,7 @@ export function parseVideoSpriteCompileRequest(value: unknown): VideoSpriteCompi
   }
   return {
     schemaVersion: VIDEO_SPRITE_COMPILE_SCHEMA_VERSION,
-    action: value.action as VideoSpriteAction,
+    action: value.action as VideoSpriteCompilableAction,
     expectedFacing,
     videoBase64: value.videoBase64 as string,
     canonicalFrameBase64: value.canonicalFrameBase64 as string,

@@ -1,9 +1,11 @@
 import { hashString } from './auth';
 import {
   VIDEO_SPRITE_ACTION_PROFILES,
-  VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_COMPILABLE_ACTIONS,
   VIDEO_SPRITE_PROCESSING_VERSION,
+  isVideoSpriteExtraAction,
   type VideoSpriteAction,
+  type VideoSpriteCompilableAction,
   type VideoSpriteAutomaticSelectionPolicy,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
@@ -20,7 +22,7 @@ export const PIXCLI_VIDEO_RESOLUTION = '720p' as const;
 export const VIDEO_REVIEW_STATUS = 'awaiting_review' as const;
 
 export interface VideoSpriteGenerationAction {
-  action: VideoSpriteAction;
+  action: VideoSpriteCompilableAction;
   motion: string;
   canonical: 'side' | 'crouch';
 }
@@ -186,24 +188,44 @@ const SELF_SERVICE_VIDEO_CHOREOGRAPHY: Readonly<Record<VideoSpriteAction, string
     ].join(' '),
   });
 
+/**
+ * Extra special moves for an existing reviewed Champion, generated one at a
+ * time (studio-curated policy only). Same framing rules as high_punch.
+ */
+export const VIDEO_SPRITE_EXTRA_GENERATION_ACTIONS: readonly VideoSpriteGenerationAction[] = [
+  {
+    action: 'fireball',
+    canonical: 'side',
+    motion: 'From the exact supplied stance, draw both hands back to the near hip, then thrust both open palms together forward toward screen-right, the RIGHT EDGE OF IMAGE, positive X, in one grounded projectile-throw gesture, ending at the fully extended release pose without retracting. Do not draw the projectile itself, any energy, glow, or effect.',
+  },
+  {
+    action: 'uppercut',
+    canonical: 'side',
+    motion: 'From the exact supplied stance, dip slightly, then drive one rising uppercut punch upward and forward toward screen-right, the RIGHT EDGE OF IMAGE, positive X, lifting the body briefly off the floor line, ending at the highest extended fist pose without landing or retracting.',
+  },
+];
+
 const ACTION_BY_NAME = new Map(
-  VIDEO_SPRITE_GENERATION_ACTIONS.map((entry) => [entry.action, entry]),
+  [...VIDEO_SPRITE_GENERATION_ACTIONS, ...VIDEO_SPRITE_EXTRA_GENERATION_ACTIONS].map((entry) => [entry.action, entry]),
 );
 
-export function videoAction(action: VideoSpriteAction): VideoSpriteGenerationAction {
+export function videoAction(action: VideoSpriteCompilableAction): VideoSpriteGenerationAction {
   const definition = ACTION_BY_NAME.get(action);
   if (!definition) throw new Error(`Unsupported video sprite action: ${action}`);
   return definition;
 }
 
 export function buildVideoSpritePrompt(
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
   generationPrompt?: string,
   policy: VideoGenerationPolicy = STUDIO_CURATED_VIDEO_POLICY,
 ): string {
   const definition = videoAction(action);
   const identityBrief = generationPrompt?.replace(/\s+/g, ' ').trim().slice(0, 2_400);
   if (policy === SELF_SERVICE_VIDEO_POLICY) {
+    if (isVideoSpriteExtraAction(action)) {
+      throw new Error('Extra video actions are studio-curated only.');
+    }
     return [
       'Generate exactly one continuous two-second fighting-game sprite-source clip from IMAGE 1.',
       `The only requested action is ${action.toUpperCase()}.`,
@@ -242,7 +264,7 @@ export interface DeterministicMultipart {
 export function deterministicCanonicalMultipart(
   canonicalBytes: Uint8Array,
   canonicalSha256: string,
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
 ): DeterministicMultipart {
   if (!/^[a-f0-9]{64}$/.test(canonicalSha256)) {
     throw new Error('Canonical SHA-256 is invalid.');
@@ -285,7 +307,7 @@ export interface PixcliVideoPayload {
 }
 
 export function buildPixcliVideoPayload(
-  action: VideoSpriteAction,
+  action: VideoSpriteCompilableAction,
   canonicalAssetHash: string,
   prompt: string,
 ): PixcliVideoPayload {
@@ -700,7 +722,7 @@ function pngDimensions(bytes: ArrayBuffer): { width: number; height: number } {
 
 export async function projectCompilerReport(
   response: VideoSpriteCompileResponse,
-  expectedAction: VideoSpriteAction,
+  expectedAction: VideoSpriteCompilableAction,
   expected: {
     facing: 'right';
     lineage: Record<string, string>;
@@ -773,7 +795,7 @@ export async function projectCompilerReport(
     expectedPlayback.push(...expectedPlayback.slice(0, -1).reverse());
   }
   if (
-    !VIDEO_SPRITE_ACTIONS.includes(expectedAction) ||
+    !VIDEO_SPRITE_COMPILABLE_ACTIONS.includes(expectedAction) ||
     selectedIndices.length !== expectedCount ||
     response.rawFrameCount !== profile.uniqueFrameCount ||
     playback.length !== response.frameCount ||
