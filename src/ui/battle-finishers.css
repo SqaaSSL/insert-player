@@ -62,5 +62,7 @@
 
 /* After a loss the offer is a quiet text link, not a gold button. */
 .battle-finisher__offer--quiet {
-  @apply min-h-11 self-center text-sm;
+  min-height: 44px;
+  align-self: center;
+  font-size: 0.875rem;
 }
