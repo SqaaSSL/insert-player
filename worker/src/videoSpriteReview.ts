@@ -1140,10 +1140,11 @@ async function reconcileApprovedVideoRunUnchecked(env: Env, row: OwnedReviewRow)
 }
 
 /**
- * An extra move's run completes on its single approval. The approval batch
- * already published the approved sprite version for that one animation; this
- * re-verifies it against the sealed revision and checkpoint, then closes the
- * run and job. The fighter's other animations are never read or written.
+ * An extra move's run completes on its single approval. Approval only seals
+ * the reviewed sprite version; it does NOT publish it (the live fighter keeps
+ * its current animations). This re-verifies that sealed version against the
+ * approved revision and checkpoint, then closes the run and job. Publishing is
+ * the separate, confirmed activate-reviewed-extra step.
  */
 async function reconcileApprovedExtraMoveRun(env: Env, row: OwnedReviewRow): Promise<void> {
   const { results } = await env.DB.prepare(`
