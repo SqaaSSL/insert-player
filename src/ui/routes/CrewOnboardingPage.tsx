@@ -30,6 +30,8 @@ interface CrewOnboardingPageProps {
   onSelectCrew?: (organizationId: string) => Promise<void>;
   onCreateFighter: () => void;
   onPlayTrial?: (mode: TrialGameMode) => void | Promise<void>;
+  /** Game picked on the home page; shown first in the try-a-game step. */
+  preferredGame?: TrialGameMode | null;
   onPlayDebut?: (photoHash: string, mode: TrialGameMode) => void;
   onCreateStage: () => void;
   onSignIn?: () => void;
@@ -107,6 +109,7 @@ export function CrewOnboardingPage({
   onSelectCrew,
   onCreateFighter,
   onPlayTrial,
+  preferredGame = null,
   onPlayDebut,
   onCreateStage,
   onSignIn,
@@ -307,7 +310,7 @@ export function CrewOnboardingPage({
           <div className="product-entry__identity-copy">
             <h1>Your First Game</h1>
             <p>Try Aura or Fight with ready-made characters, create your own Rookie, then bring your friends and choose a home stage together.</p>
-            {onPlayTrial ? <TrialGameChoice showPreviews onPlay={onPlayTrial} onSkip={onCreateFighter} /> : null}
+            {onPlayTrial ? <TrialGameChoice showPreviews preferred={preferredGame} onPlay={onPlayTrial} onSkip={onCreateFighter} /> : null}
             {onSignIn ? <Button variant={onPlayTrial ? 'ghost' : 'primary'} onClick={onSignIn}>Sign In To Continue</Button> : authSlot}
           </div>
           <div className="gallery-panel">
@@ -352,7 +355,7 @@ export function CrewOnboardingPage({
           {step === 'create' ? <>
             <p>Turn one photo into your own playable character. Your first Rookie is included.</p>
             <Button variant="primary" size="lg" onClick={onCreateFighter}>Create My Rookie</Button>
-            {!onboarding.trialComplete && onPlayTrial ? <TrialGameChoice onPlay={onPlayTrial} /> : null}
+            {!onboarding.trialComplete && onPlayTrial ? <TrialGameChoice preferred={preferredGame} onPlay={onPlayTrial} /> : null}
           </> : null}
           {step === 'debut' ? <>
             <p>Play one match as {target.name} in Aura or Fight. Then bring your friends into the Crew.</p>

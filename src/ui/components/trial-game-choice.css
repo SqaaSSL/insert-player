@@ -50,3 +50,9 @@
     @apply grid-cols-1;
   }
 }
+/* Phones: one game per row, so a portrait Aura capture is not squeezed beside Fight. */
+@media (max-width: 640px) {
+  .trial-game-choice--cards .trial-game-choice__options {
+    @apply grid-cols-1;
+  }
+}

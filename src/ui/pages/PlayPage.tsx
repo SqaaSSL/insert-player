@@ -1,7 +1,7 @@
 import type { FighterGameMode } from '../../services/FighterAssetPacks.ts';
 import type { OnboardingStatus } from '../../services/Crews.ts';
 import { Button } from '../components/Button.tsx';
-import { LaunchFilm } from '../components/LaunchFilm.tsx';
+import { HomeHero } from '../components/LaunchFilm.tsx';
 import { GAME_ENTRY_CONTENT, GameEntryPlayButton, GameEntryPreview, type PlayGameHandler } from './GameLandingPage.tsx';
 import './product-entry.css';
 
@@ -16,6 +16,8 @@ export interface PlayPageProps {
   onContinueOnboarding?: () => void;
   /** Start the debut match directly from the Play page. */
   onPlayDebut?: (photoHash: string, mode: 'aura' | 'fight') => void;
+  /** The first run, optionally with a game already chosen. Used while it is unfinished. */
+  onTry?: (mode?: FighterGameMode) => void;
 }
 
 export function nextMissionTitle(status: Pick<OnboardingStatus, 'fighter' | 'debutComplete' | 'recommendedStep'>): string {
@@ -27,13 +29,15 @@ export function nextMissionTitle(status: Pick<OnboardingStatus, 'fighter' | 'deb
 }
 
 /** Play: Aura and Fight share the top row as equals; Rush stays available below. */
-export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding, onPlayDebut }: PlayPageProps) {
+export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges, onChooseCharacter, lastGame = null, onboardingStatus, onContinueOnboarding, onPlayDebut, onTry }: PlayPageProps) {
+  const firstRunOpen = Boolean(onTry) && !onboardingStatus?.complete;
+  const pickGame: PlayGameHandler = (mode) => firstRunOpen && mode !== 'rush' ? onTry!(mode) : onPlay(mode);
   return (
     <div className="product-entry product-entry--play">
-      <header className="product-entry__page-heading">
-        <h1>Play</h1>
-        {lastGame && <button type="button" className="product-entry__text-link" onClick={() => onPlay(lastGame)}>Continue {GAME_ENTRY_CONTENT[lastGame].name} →</button>}
-      </header>
+      <HomeHero ctaLabel={firstRunOpen ? (onboardingStatus ? 'Continue my first run' : 'Try it free') : undefined}
+        onCta={firstRunOpen ? () => onTry!() : undefined}>
+        {lastGame ? <button type="button" className="product-entry__text-link" onClick={() => onPlay(lastGame)}>Continue {GAME_ENTRY_CONTENT[lastGame].name} →</button> : null}
+      </HomeHero>
 
       {onboardingStatus?.fighter && !onboardingStatus.debutComplete && onPlayDebut ? (
         <section className="gallery-panel play-debut-card" aria-label="Next mission">
@@ -64,7 +68,7 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
             <div className="product-entry__duo-copy">
               <h2 id={`play-${mode}-title`}>{GAME_ENTRY_CONTENT[mode].name}</h2>
               <p className="product-entry__promise">{mode === 'aura' ? 'Hit the beat. Win the crowd.' : 'Face a rival. Take the round.'}</p>
-              <GameEntryPlayButton mode={mode} onPlay={onPlay} />
+              <GameEntryPlayButton mode={mode} onPlay={pickGame} />
               <p className="product-entry__play-hint">{GAME_ENTRY_CONTENT[mode].playHint}</p>
               <div className="product-entry__duo-links">
                 {mode === 'aura' && onChooseCharacter ? <button className="product-entry__text-link" type="button" onClick={onChooseCharacter}>Choose a character</button> : null}
@@ -87,7 +91,6 @@ export function PlayPage({ onPlay, onExplore, onOpenCharacters, onOpenChallenges
         </article>
       </section>
 
-      <LaunchFilm />
 
       <nav className="product-entry__collection" aria-label="Your Insert Player collection">
         <p>Your characters and rivals, all in one place.</p>

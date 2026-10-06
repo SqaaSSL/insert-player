@@ -29,6 +29,8 @@ interface TrialGameChoiceProps {
   onSkip?: () => void;
   skipLabel?: string;
   intro?: string | null;
+  /** Arrived from a game on the home page: list it first and make it the primary action. */
+  preferred?: TrialGameMode | null;
 }
 
 /** The first solo trial uses ready-made characters and needs no account. */
@@ -38,6 +40,7 @@ export function TrialGameChoice({
   onSkip,
   skipLabel = 'Skip the demo · Create my character',
   intro = 'Try first · choose your game',
+  preferred = null,
 }: TrialGameChoiceProps) {
   const launching = useRef(false);
   const [pending, setPending] = useState<TrialGameMode | null>(null);
@@ -62,17 +65,17 @@ export function TrialGameChoice({
     <div className={`trial-game-choice${showPreviews ? ' trial-game-choice--cards' : ''}`} role="group" aria-label="Try first">
       {intro ? <p className="trial-game-choice__intro">{intro}</p> : null}
       <div className="trial-game-choice__options">
-        {(['aura', 'fight'] as const).map((mode) => {
+        {(preferred === 'fight' ? ['fight', 'aura'] as const : ['aura', 'fight'] as const).map((mode) => {
           const content = TRIAL_GAME_CONTENT[mode];
           return (
-            <div key={mode} className="trial-game-choice__option">
+            <div key={mode} className={`trial-game-choice__option${preferred === mode ? ' is-preferred' : ''}`}>
               {showPreviews ? (
                 <div className="trial-game-choice__preview">
                   <GameplayEntryPreview mode={mode} compact />
                   <span className="trial-game-choice__genre">{content.genre}</span>
                 </div>
               ) : null}
-              <Button variant="primary" size="lg" disabled={pending !== null} onClick={() => void play(mode)}>
+              <Button variant={!preferred || preferred === mode ? 'primary' : 'secondary'} size="lg" disabled={pending !== null} onClick={() => void play(mode)}>
                 {content.playLabel}
               </Button>
               <p>{content.blurb}</p>
