@@ -13,8 +13,7 @@ import {
   FIXED_TIMESTEP,
   FighterState,
   GAME_WIDTH,
-  ROUND_TIME,
-} from '../constants.ts';
+  ROUND_TIME, STAGE_LEFT, STAGE_RIGHT } from '../constants.ts';
 import {
   getFighterPersonality,
   resolveMatchRoundsToWin,
@@ -103,6 +102,12 @@ export interface MatchSimConfig {
   p2Personality?: FighterPersonality;
   /** Arcade-ladder AI strength for the P2 CPU, 0..1. */
   p2Difficulty?: number;
+  /**
+   * Street Fighter rule for a camera narrower than the stage: the fighters
+   * can never be further apart than this many world px, so both stay on
+   * screen. Omitted (desktop, online) keeps the whole stage open.
+   */
+  maxSeparation?: number;
 }
 
 export interface MatchSimSnapshot {
@@ -545,6 +550,7 @@ export class MatchSimulation {
     const p2PrevState = this.p2.state;
     this.p1.update(DT, in1, this.p2.x);
     this.p2.update(DT, in2, this.p1.x);
+    this.limitSeparation();
     if (p1PrevState !== this.p1.state && this.p1.isInAttack()) {
       events.push({ type: 'attackStart', playerIndex: 0, state: this.p1.state });
     }
@@ -570,6 +576,17 @@ export class MatchSimulation {
     if (this.p1.health <= 0 || this.p2.health <= 0) {
       this.endRound(events);
     }
+  }
+
+  private limitSeparation(): void {
+    const max = this.config.maxSeparation;
+    if (!max || max <= 0) return;
+    const [left, right] = this.p1.x <= this.p2.x ? [this.p1, this.p2] : [this.p2, this.p1];
+    const excess = right.x - left.x - max;
+    if (excess <= 0) return;
+    // Pulling the two together never moves either of them towards a wall.
+    left.x += excess / 2;
+    right.x -= excess / 2;
   }
 
   private checkFireballSpawn(fighter: Fighter, events: MatchSimEvent[]): void {

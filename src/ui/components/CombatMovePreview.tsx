@@ -8,8 +8,8 @@ import { SpritePreviewSurface } from './SpritePreviewSurface.tsx';
 export function controlPreviewMove(input: Readonly<FighterInput>, mode: 'fight' | 'rush') {
   const low = mode === 'fight' && input.down;
   // Special moves use these same authored gestures in AiSpriteLoader.
-  if (input.super) return { animation: 'high_punch', label: 'Super', note: mode === 'fight' ? 'A stronger fireball. Needs a full meter.' : 'A stronger fireball.' };
-  if (input.fireball) return { animation: 'high_punch', label: 'Fireball', note: 'This gesture launches a projectile.' };
+  if (input.super) return { animation: 'fireball', label: 'Super', note: mode === 'fight' ? 'A stronger fireball. Needs a full meter.' : 'A stronger fireball.' };
+  if (input.fireball) return { animation: 'fireball', label: 'Fireball', note: 'This gesture launches a projectile.' };
   if (input.uppercut) return mode === 'rush'
     ? { animation: 'jump', label: 'Jump', note: '' }
     : { animation: 'high_punch', label: 'Uppercut', note: 'This strike lifts you into the air.' };
@@ -57,8 +57,11 @@ export function CombatMovePreview({ photoHash, mode }: { photoHash: string; mode
     return () => { cancelled = true; };
   }, [photoHash]);
 
+  // Show the fighter's own move; only a fighter without it (official
+  // Champions have no fireball or uppercut) falls back to the punch.
   const cached = loaded?.photoHash === photoHash
     ? loaded.sprites.find(sprite => sprite.animationName === move.animation)
+      ?? (['fireball', 'uppercut'].includes(move.animation) ? loaded.sprites.find(sprite => sprite.animationName === 'high_punch') : undefined)
     : null;
   if (!cached) return null;
   const native = cached.animationFormat === 'video-dense-v1';

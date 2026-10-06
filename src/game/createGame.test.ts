@@ -45,9 +45,19 @@ describe('Aura responsive runtime ownership', () => {
     expect(instances[0].config).toMatchObject({ width: 1024, height: 576, scale: { mode: 'FIT', expandParent: true } });
     expect(instances[0].events.once).not.toHaveBeenCalled();
   });
-  it('preserves Fight touch CSS-fit behavior', () => {
+  it('keeps the full stage for Fight on a landscape touch screen', () => {
     viewport.matchMedia.mockReturnValue({ matches: true });
+    viewport.innerWidth = 844; viewport.innerHeight = 390;
     createGame('game-container', { sceneKey: 'FightScene', data: {} });
     expect(instances[0].config).toMatchObject({ width: 1024, height: 576, scale: { mode: 'NONE' } });
+  });
+  it('gives Fight a narrower, follow-camera canvas on a portrait phone', () => {
+    viewport.matchMedia.mockReturnValue({ matches: true });
+    viewport.innerWidth = 390; viewport.innerHeight = 844;
+    createGame('game-container', { sceneKey: 'FightScene', data: {} });
+    const { width, height } = instances[0].config as { width: number; height: number };
+    expect(height).toBe(576);
+    expect(width).toBeGreaterThanOrEqual(520);
+    expect(width).toBeLessThan(1024);
   });
 });
