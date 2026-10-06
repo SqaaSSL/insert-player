@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { Button } from './Button.tsx';
 
 export const LAUNCH_FILM = '/assets/insert-player-launch-aura-v25.mp4';
+/** The social (OG) card doubles as the film's thumbnail until it moves to YouTube. */
+export const LAUNCH_FILM_POSTER = '/assets/social-card-v12.webp';
 
 /** Opt-in playback keeps the three-game film off the landing's initial download. */
 export function LaunchFilm() {
@@ -19,7 +21,7 @@ export function LaunchFilm() {
         preload="none"
         width="1920"
         height="1080"
-        poster="/assets/insert-player-launch-aura-v25-poster.webp"
+        poster={LAUNCH_FILM_POSTER}
       >
         <source src={LAUNCH_FILM} type="video/mp4" />
         <track kind="captions" src="/assets/insert-player-launch-aura-v25-en.vtt" srcLang="en" label="English" />
@@ -47,7 +49,7 @@ export function HomeHero({ ctaLabel, onCta, children }: { ctaLabel?: string; onC
         preload="none"
         width="1920"
         height="1080"
-        poster="/assets/insert-player-launch-aura-v25-poster.webp"
+        poster={LAUNCH_FILM_POSTER}
       >
         <source src={LAUNCH_FILM} type="video/mp4" />
         <track kind="captions" src="/assets/insert-player-launch-aura-v25-en.vtt" srcLang="en" label="English" />

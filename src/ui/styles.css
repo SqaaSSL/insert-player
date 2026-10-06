@@ -5759,3 +5759,12 @@
     @apply min-h-12 text-[11px];
   }
 }
+
+/* Phones have their own system Back; an in-game Back/Exit Demo button only
+   takes space and invites mis-taps. Pause stays (it holds Quit). */
+@media (pointer: coarse) {
+  .game-shell .game-shell__gallery-link,
+  .game-shell .aura-game-toolbar__back {
+    display: none !important;
+  }
+}
