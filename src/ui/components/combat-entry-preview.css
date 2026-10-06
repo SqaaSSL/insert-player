@@ -112,3 +112,15 @@
   min-height: 0;
   width: auto;
 }
+
+/* Compact cards are 16:9, but on phones Aura's gameplay is a 9:16 capture
+   (arena over the four lanes). Let the card take the capture's shape so the
+   performer and the lanes are both visible instead of a middle strip. */
+.product-entry__duo-art .product-entry__preview.aura-gameplay-preview.is-portrait.is-compact,
+.trial-game-choice__preview .product-entry__preview.aura-gameplay-preview.is-portrait.is-compact {
+  aspect-ratio: auto;
+  height: auto;
+}
+.aura-gameplay-preview.is-portrait.is-compact .combat-entry-preview__viewport {
+  width: min(100%, 34svh, 300px);
+}

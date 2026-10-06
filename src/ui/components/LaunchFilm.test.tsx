@@ -27,11 +27,21 @@ describe('three-game landing film', () => {
     expect(html).toMatch(/<nav class="product-entry__other-games"[\s\S]*?<\/nav><section class="product-entry__film"/);
   });
 
-  it('places the same film below the game list on Play and returning-player home', () => {
-    const html = renderToStaticMarkup(<PlayPage onPlay={vi.fn()} onExplore={vi.fn()}
+  it('opens Play with what Insert Player is, the film and one way in, before the games', () => {
+    const html = renderToStaticMarkup(<PlayPage onPlay={vi.fn()} onExplore={vi.fn()} onTry={vi.fn()}
       onOpenCharacters={vi.fn()} onOpenChallenges={vi.fn()} lastGame="aura" />);
     expect(html).toContain(LAUNCH_FILM);
-    expect(html).toMatch(/<section class="product-entry__game-list"[\s\S]*?<\/section><section class="product-entry__film"/);
-    expect(html.indexOf('product-entry__film')).toBeLessThan(html.indexOf('product-entry__collection'));
+    expect(html.indexOf('Insert yourself into the game.')).toBeLessThan(html.indexOf('home-hero__video'));
+    expect(html.indexOf('home-hero__video')).toBeLessThan(html.indexOf('Try it free'));
+    expect(html.indexOf('Try it free')).toBeLessThan(html.indexOf('product-entry__duo'));
+    expect(html).not.toContain('product-entry__film');
+  });
+
+  it('drops the try-it call once the first run is complete', () => {
+    const html = renderToStaticMarkup(<PlayPage onPlay={vi.fn()} onExplore={vi.fn()} onTry={vi.fn()}
+      onOpenCharacters={vi.fn()} onOpenChallenges={vi.fn()} onboardingStatus={{ complete: true } as never} />);
+    expect(html).toContain('Insert yourself into the game.');
+    expect(html).not.toContain('Try it free');
+    expect(html).not.toContain('Continue my first run');
   });
 });

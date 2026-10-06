@@ -15,7 +15,9 @@ describe('first run entry', () => {
     const markup = renderToStaticMarkup(
       <FirstRunPage onPlay={() => {}} onSkip={() => {}} onExplore={() => {}} onSignIn={() => {}} />,
     );
-    expect(markup).toContain('Step 1 · Pick your game');
+    expect(markup).toContain('Insert yourself into the game.');
+    expect(markup).toContain('Or pick a game');
+    expect(markup.indexOf('home-hero__video')).toBeLessThan(markup.indexOf('Try Aura'));
     expect(markup).toContain('Try Aura');
     expect(markup).toContain('Try Fight');
     expect(markup).not.toContain('Try Rush');

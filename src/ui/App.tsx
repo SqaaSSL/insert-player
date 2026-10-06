@@ -811,6 +811,7 @@ export function App({
     }
     if (route === '/' && !readLastGame(authSessionKey) && !onboardingStatus) {
       return <FirstRunPage onPlay={tryGame} onExplore={(game) => navigate(`/games/${game}`)} onSignIn={onSignIn}
+        onTry={(game) => navigate('/onboarding', game ? `game=${game}` : '')}
         onSkip={() => navigate('/fighters/new', buildCreationSearch({ tier: 'rookie', creationPackage: 'complete', source: 'landing' }))} />;
     }
     if (route.startsWith('/games/')) {
@@ -826,6 +827,7 @@ export function App({
       onExplore={(mode) => navigate(`/games/${mode}`)} onOpenCharacters={() => navigate('/gallery')}
       onOpenChallenges={() => navigate('/challenges')} onChooseCharacter={() => navigate('/roster/aura')}
       onboardingStatus={onboardingStatus} onContinueOnboarding={() => navigate('/onboarding')}
+      onTry={(game) => navigate('/onboarding', game && game !== 'rush' ? `game=${game}` : '')}
       onPlayDebut={(photoHash, mode) => navigate(debutDestination(mode), debutSearch(debutDestination(mode), photoHash))} />;
     if (route === '/credits') {
       let returnTo: AppRoute | null = null;
@@ -898,6 +900,7 @@ export function App({
           onCreateCrew={onCreateCrew}
           onSelectCrew={onSelectCrew}
           onPlayTrial={tryGame}
+          preferredGame={params.get('game') === 'fight' ? 'fight' : params.get('game') === 'aura' ? 'aura' : null}
           onPlayDebut={(photoHash, mode) => navigate(debutDestination(mode), debutSearch(debutDestination(mode), photoHash))}
           onCreateFighter={() => navigate('/fighters/new', buildCreationSearch({
             tier: 'rookie', creationPackage: 'aura', returnTo: 'aura', source: 'trial',

@@ -449,3 +449,24 @@
 .play-debut-card__actions {
   @apply flex flex-wrap gap-2 [&>*]:flex-[1_1_160px];
 }
+
+/* Home hero: what Insert Player is, the film, one way in. First on both home pages. */
+.home-hero {
+  @apply mb-8 flex flex-col gap-4;
+}
+.home-hero h1 {
+  @apply m-0 max-w-[18ch] text-[clamp(26px,6vw,48px)] leading-[1.15] text-asf-gold [text-wrap:balance];
+}
+.home-hero__claim {
+  @apply m-0 max-w-[60ch] text-base leading-relaxed text-asf-text [text-wrap:pretty];
+}
+.home-hero__video {
+  @apply block aspect-video h-auto w-full rounded-[6px] bg-black
+         focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-asf-gold;
+}
+.home-hero__actions {
+  @apply flex flex-col items-stretch gap-2 sm:flex-row sm:items-center;
+}
+.home-hero__actions .asf-btn {
+  @apply w-full sm:w-auto;
+}
