@@ -317,7 +317,7 @@ export async function readAdminArcadeGenerationContract(
   return readImageProcessorGenerationContract(env);
 }
 
-function generationJobRequest(
+export function generationJobRequest(
   request: Request,
   fighterId: string,
   purchaseId: string,
@@ -338,7 +338,7 @@ function generationJobRequest(
   });
 }
 
-async function createAdminGenerationAuthorization(
+export async function createAdminGenerationAuthorization(
   env: Env,
   auth: AuthContext,
   fighterId: string,

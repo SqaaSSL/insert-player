@@ -6,7 +6,11 @@ import { readJsonBody } from './requestBody';
 import type { AuthContext, Env, GenerationJob } from './types';
 import {
   VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_COMPILABLE_ACTIONS,
+  VIDEO_SPRITE_EXTRA_ACTIONS,
+  isVideoSpriteExtraAction,
   type VideoSpriteAction,
+  type VideoSpriteCompilableAction,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
 import {
@@ -36,7 +40,7 @@ export interface VideoSpriteCandidateRow {
   job_id: string;
   user_id: string;
   fighter_id: string;
-  action: VideoSpriteAction;
+  action: VideoSpriteCompilableAction;
   sequence_order: number;
   status: VideoSpriteCandidateStatus;
   current_revision: number;
@@ -114,7 +118,7 @@ interface OwnedReviewRow extends VideoSpriteCandidateRow, VideoSpriteCandidateRe
 
 export interface PersistVideoCandidateInput {
   job: GenerationJob;
-  action: VideoSpriteAction;
+  action: VideoSpriteCompilableAction;
   sequenceOrder: number;
   pixcliJobId: string;
   providerRequestId: string;
@@ -133,6 +137,24 @@ function json(data: unknown, status = 200): Response {
 function isAction(value: unknown): value is VideoSpriteAction {
   return typeof value === 'string' && VIDEO_SPRITE_ACTIONS.includes(value as VideoSpriteAction);
 }
+
+/**
+ * A review-gated run that adds ONE extra special move (fireball/uppercut) to
+ * an existing reviewed Champion. Its job and run are fighter_retry_animation
+ * targeting that move; it never touches the full 11-action run.
+ */
+function isExtraMoveJob(job: Pick<GenerationJob, 'operation' | 'target_kind' | 'target_name'>): boolean {
+  return job.operation === 'fighter_retry_animation' && job.target_kind === 'animation'
+    && isVideoSpriteExtraAction(job.target_name);
+}
+
+function isExtraMoveRow(row: Pick<OwnedReviewRow, 'operation' | 'run_operation' | 'job_target_kind' | 'target_name' | 'action'>): boolean {
+  return row.operation === 'fighter_retry_animation' && row.run_operation === 'fighter_retry_animation'
+    && row.job_target_kind === 'animation' && isVideoSpriteExtraAction(row.target_name)
+    && row.action === row.target_name;
+}
+
+const EXTRA_ACTIONS_SQL = VIDEO_SPRITE_EXTRA_ACTIONS.map((action) => `'${action}'`).join(', ');
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
@@ -210,8 +232,15 @@ async function ownedReview(
     JOIN generation_artifact_runs run ON run.id = candidate.run_id
     LEFT JOIN generation_jobs successor ON successor.resumed_from_job_id = candidate.job_id
     WHERE candidate.job_id = ? AND candidate.user_id = ?
-      AND job.creation_flow = 'video' AND job.operation = 'fighter_generation'
-      AND run.creation_flow = 'video' AND run.operation = 'fighter_generation'
+      AND job.creation_flow = 'video' AND run.creation_flow = 'video'
+      AND (
+        (job.operation = 'fighter_generation' AND run.operation = 'fighter_generation')
+        OR (
+          job.operation = 'fighter_retry_animation' AND run.operation = 'fighter_retry_animation'
+          AND job.target_kind = 'animation' AND job.target_name IN (${EXTRA_ACTIONS_SQL})
+          AND candidate.action = job.target_name
+        )
+      )
     LIMIT 1
   `).bind(jobId, userId).first<OwnedReviewRow>();
   if (!row) return null;
@@ -260,11 +289,12 @@ function serializeReview(row: OwnedReviewRow) {
     processingVersion: row.processing_version,
     createdAt: row.created_at,
     reviewedAt: row.reviewed_at,
-    continuationAvailable: row.status === 'approved' && row.run_status === 'partial' &&
+    continuationAvailable: !isExtraMoveRow(row) && row.status === 'approved' && row.run_status === 'partial' &&
       !row.successor_job_id && row.approved_action_count < VIDEO_SPRITE_ACTIONS.length,
-    continuationOperation: 'fighter_generation',
+    continuationOperation: isExtraMoveRow(row) ? null : 'fighter_generation',
     restartOperation: row.status === 'rejected' || row.run_status === 'failed'
-      ? 'fighter_generation' : null,
+      ? (isExtraMoveRow(row) ? 'fighter_retry_animation' : 'fighter_generation') : null,
+    extraMove: isExtraMoveRow(row) ? row.action : null,
     fullRunRestartRequired: row.status === 'rejected' || row.run_status === 'failed',
     assets: {
       runtime: `${suffix}/runtime?revision=${row.current_revision}`,
@@ -283,7 +313,7 @@ async function persistRevisionObjects(
     job: GenerationJob;
     candidateId: string;
     revision: number;
-    action: VideoSpriteAction;
+    action: VideoSpriteCompilableAction;
     response: VideoSpriteCompileResponse;
     projection: VideoSpriteCandidateReportProjection;
   },
@@ -335,10 +365,14 @@ export async function persistInitialVideoSpriteCandidate(
   input: PersistVideoCandidateInput,
 ): Promise<{ candidateId: string; revision: number }> {
   if (
-    input.job.creation_flow !== 'video' || input.job.operation !== 'fighter_generation' ||
-    input.job.tier !== 'champion' ||
-    !input.job.artifact_run_id || !isAction(input.action) ||
-    input.sequenceOrder !== VIDEO_SPRITE_ACTIONS.indexOf(input.action) ||
+    input.job.creation_flow !== 'video' || input.job.tier !== 'champion' ||
+    !input.job.artifact_run_id ||
+    !(
+      (input.job.operation === 'fighter_generation' && isAction(input.action)
+        && input.sequenceOrder === VIDEO_SPRITE_ACTIONS.indexOf(input.action))
+      || (isExtraMoveJob(input.job) && input.action === input.job.target_name
+        && input.sequenceOrder === VIDEO_SPRITE_COMPILABLE_ACTIONS.indexOf(input.action))
+    ) ||
     input.video.bytes.byteLength < 12 || input.video.bytes.byteLength > MAX_VIDEO_BYTES ||
     input.providerAudit.bytes.byteLength < 2 || input.providerAudit.bytes.byteLength > MAX_AUDIT_BYTES
   ) throw new Error('Video candidate persistence contract is invalid');
@@ -689,7 +723,7 @@ export async function getVideoSpriteReview(
   if (!row) return json({ error: 'Video review not found' }, 404);
   if (
     row.status === 'approved' && row.run_status === 'partial' &&
-    row.approved_action_count === VIDEO_SPRITE_ACTIONS.length
+    row.approved_action_count === (isExtraMoveRow(row) ? 1 : VIDEO_SPRITE_ACTIONS.length)
   ) {
     const terminalFailure = await reconcileApprovedVideoRun(env, row);
     row = await ownedReview(env, auth.userId, jobId);
@@ -765,9 +799,12 @@ export async function approveVideoSpriteReview(
       FROM sprite_versions version
       JOIN video_sprite_candidate_revisions revision ON revision.sprite_version_id = version.id
       JOIN video_sprite_candidates candidate ON candidate.id = revision.candidate_id
+      JOIN generation_jobs candidate_job ON candidate_job.id = candidate.job_id
       WHERE candidate.id = ? AND candidate.status = 'approved'
         AND candidate.approved_revision = ? AND revision.revision = ?
         AND revision.report_sha256 = ?
+        -- An extra move on a live fighter is published by its own activation step.
+        AND candidate_job.operation = 'fighter_generation'
       ON CONFLICT(fighter_id, animation_name, quality_tier) DO UPDATE SET
         blob_key = excluded.blob_key, raw_blob_key = excluded.raw_blob_key,
         content_hash = excluded.content_hash, raw_content_hash = excluded.raw_content_hash,
@@ -955,6 +992,10 @@ async function reconcileApprovedVideoRun(env: Env, row: OwnedReviewRow): Promise
 
 async function reconcileApprovedVideoRunUnchecked(env: Env, row: OwnedReviewRow): Promise<void> {
   if (row.status !== 'approved' || row.run_status === 'succeeded') return;
+  if (isExtraMoveRow(row)) {
+    await reconcileApprovedExtraMoveRun(env, row);
+    return;
+  }
   const { results } = await env.DB.prepare(`
     SELECT action FROM video_sprite_candidates WHERE run_id = ? AND status = 'approved'
   `).bind(row.run_id).all<{ action: VideoSpriteAction }>();
@@ -1089,6 +1130,72 @@ async function reconcileApprovedVideoRunUnchecked(env: Env, row: OwnedReviewRow)
         WHERE run.id = ? AND run.status = 'succeeded'
       )
     `).bind(`${terminalJobId}:video-complete`, terminalJobId, row.run_id),
+  ]);
+  const finalized = await env.DB.prepare(`
+    SELECT status FROM generation_artifact_runs WHERE id = ? AND user_id = ?
+  `).bind(row.run_id, row.user_id).first<{ status: string }>();
+  if (finalized?.status !== 'succeeded') {
+    throw new Error('Approved video run could not be finalized atomically');
+  }
+}
+
+/**
+ * An extra move's run completes on its single approval. The approval batch
+ * already published the approved sprite version for that one animation; this
+ * re-verifies it against the sealed revision and checkpoint, then closes the
+ * run and job. The fighter's other animations are never read or written.
+ */
+async function reconcileApprovedExtraMoveRun(env: Env, row: OwnedReviewRow): Promise<void> {
+  const { results } = await env.DB.prepare(`
+    SELECT job_id, action, status FROM video_sprite_candidates WHERE run_id = ?
+  `).bind(row.run_id).all<{ job_id: string; action: string; status: string }>();
+  const candidates = results ?? [];
+  if (candidates.length !== 1 || candidates[0].action !== row.target_name || candidates[0].status !== 'approved') {
+    throw new Error('Approved video run does not contain the exact required action set');
+  }
+  const review = await ownedReview(env, row.user_id, candidates[0].job_id);
+  if (!review || review.run_id !== row.run_id || review.status !== 'approved' ||
+    review.approved_revision !== review.current_revision || review.action !== row.target_name) {
+    throw new Error('Approved video run revision lineage changed before finalization');
+  }
+  const version = await requireApprovalIntegrity(env, review);
+  const checkpoint = await env.DB.prepare(`
+    SELECT clean_version_id, clean_blob_key, status FROM generation_artifact_checkpoints
+    WHERE run_id = ? AND artifact_kind = 'sprite' AND artifact_name = ? LIMIT 1
+  `).bind(row.run_id, review.action).first<{ clean_version_id: string; clean_blob_key: string; status: string }>();
+  if (!checkpoint || checkpoint.status !== 'approved' || checkpoint.clean_version_id !== version.id ||
+    checkpoint.clean_blob_key !== version.blob_key) {
+    throw new Error('Approved video checkpoint no longer matches its sealed sprite version');
+  }
+  const job = await env.DB.prepare('SELECT * FROM generation_jobs WHERE id = ? AND user_id = ?')
+    .bind(review.job_id, row.user_id).first<GenerationJob>();
+  if (!job) throw new Error('Approved generation job could not be reloaded');
+  await assertArtifactRunComplete(env, job);
+  await env.DB.batch([
+    env.DB.prepare(`
+      UPDATE generation_artifact_runs
+      SET status = 'succeeded', failure_stage = NULL,
+          completed_at = COALESCE(completed_at, datetime('now')), updated_at = datetime('now')
+      WHERE id = ? AND user_id = ? AND fighter_id = ? AND status = 'partial'
+    `).bind(row.run_id, row.user_id, row.fighter_id),
+    env.DB.prepare(`
+      UPDATE generation_jobs
+      SET stage = 'complete', progress_current = progress_total, updated_at = datetime('now')
+      WHERE id = ? AND user_id = ? AND status = 'succeeded' AND review_status = 'approved'
+        AND EXISTS (SELECT 1 FROM generation_artifact_runs run WHERE run.id = ? AND run.status = 'succeeded')
+    `).bind(review.job_id, row.user_id, row.run_id),
+    env.DB.prepare(`
+      UPDATE provider_cost_events
+      SET job_outcome = 'succeeded'
+      WHERE artifact_run_id = ? AND job_outcome = 'succeeded_partial'
+        AND EXISTS (SELECT 1 FROM generation_artifact_runs run WHERE run.id = ? AND run.status = 'succeeded')
+    `).bind(row.run_id, row.run_id),
+    env.DB.prepare(`
+      INSERT OR IGNORE INTO generation_job_events (id, job_id, stage, status, detail)
+      SELECT ?, ?, 'complete', 'succeeded', ?
+      WHERE EXISTS (SELECT 1 FROM generation_artifact_runs run WHERE run.id = ? AND run.status = 'succeeded')
+    `).bind(`${review.job_id}:video-extra-complete`, review.job_id,
+      `Review-gated extra move ${review.action} approved`, row.run_id),
   ]);
   const finalized = await env.DB.prepare(`
     SELECT status FROM generation_artifact_runs WHERE id = ? AND user_id = ?

@@ -14,6 +14,13 @@ export const PLAYABLE_ANIMATION_NAMES = [
 
 export type PlayableAnimationName = typeof PLAYABLE_ANIMATION_NAMES[number];
 
+/**
+ * Optional combat specials. A fighter is complete without them (Fight falls
+ * back to the punch), but when present they are imported and played: Rookies
+ * have them from generation and reviewed Champions can gain them later.
+ */
+export const COMBAT_SPECIAL_ANIMATION_NAMES = ['fireball', 'uppercut'] as const;
+
 export interface FighterPlayabilityIdentity {
   name?: string | null;
   characterName?: string | null;

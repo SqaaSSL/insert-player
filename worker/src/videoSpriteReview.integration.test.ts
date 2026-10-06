@@ -2,7 +2,9 @@ import { Miniflare } from 'miniflare';
 import { describe, expect, it, vi } from 'vitest';
 import {
   VIDEO_SPRITE_ACTIONS,
+  VIDEO_SPRITE_COMPILABLE_ACTIONS,
   type VideoSpriteAction,
+  type VideoSpriteCompilableAction,
   type VideoSpriteCompileResponse,
 } from '../../src/services/VideoSpriteCompileContract';
 import { hashString } from './auth';
@@ -17,6 +19,7 @@ import {
   stageApprovedVideoSpriteRecuration,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
+import { activateAdminArcadeVideoExtra, rollbackAdminArcadeVideoExtra } from './arcadeVideoExtras';
 import type { AuthContext, Env } from './types';
 
 const USER_ID = 'video-review-user';
@@ -160,7 +163,7 @@ function mp4(label: string): ArrayBuffer {
 
 interface Harness { mf: Miniflare; db: D1Database; bucket: R2Bucket; env: Env }
 interface ReviewSeed {
-  action: VideoSpriteAction; candidateId: string; jobId: string;
+  action: VideoSpriteCompilableAction; candidateId: string; jobId: string;
   reportSha256: string; runtimeKey: string; runtimeBytes: ArrayBuffer;
   canonicalKey: string; canonicalBytes: ArrayBuffer;
 }
@@ -202,9 +205,10 @@ async function seedReviews(
   approvedCount: number,
   operation: 'fighter_generation' | 'fighter_retry_animation' = 'fighter_generation',
   actionLimit?: number,
+  retryAction: VideoSpriteCompilableAction = 'idle',
 ): Promise<ReviewSeed[]> {
-  const allActions: VideoSpriteAction[] = operation === 'fighter_retry_animation'
-    ? ['idle'] : [...VIDEO_SPRITE_ACTIONS];
+  const allActions: VideoSpriteCompilableAction[] = operation === 'fighter_retry_animation'
+    ? [retryAction] : [...VIDEO_SPRITE_ACTIONS];
   const actions = allActions.slice(0, actionLimit ?? allActions.length);
   const sourceKinds = [
     'side', 'side_raw', 'upright', 'upright_raw', 'crouch', 'crouch_raw',
@@ -247,7 +251,7 @@ async function seedReviews(
   ) VALUES (?, ?, ?, 'champion', 'video', ?, ?, ?, ?, ?, 'partial')`).bind(
     RUN_ID, USER_ID, FIGHTER_ID, operation,
     operation === 'fighter_retry_animation' ? 'animation' : null,
-    operation === 'fighter_retry_animation' ? 'idle' : null,
+    operation === 'fighter_retry_animation' ? retryAction : null,
     hexId(0x100), sourceManifest,
   ).run();
   await Promise.all(sourceKinds.map((kind) => put(
@@ -338,7 +342,7 @@ async function seedReviews(
         status, current_revision, approved_revision, reviewed_at, reviewed_by_user_id
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`)
         .bind(candidateId, RUN_ID, jobId, USER_ID, FIGHTER_ID, action,
-          VIDEO_SPRITE_ACTIONS.indexOf(action), approved ? 'approved' : 'awaiting_review',
+          VIDEO_SPRITE_COMPILABLE_ACTIONS.indexOf(action), approved ? 'approved' : 'awaiting_review',
           approved ? 1 : null, approved ? '2026-08-27 00:00:00' : null,
           approved ? USER_ID : null),
       target.db.prepare(`INSERT INTO video_sprite_candidate_revisions (
@@ -375,7 +379,8 @@ async function seedReviews(
       runtimeKey: keys.runtime, runtimeBytes: values.runtime,
       canonicalKey: keys.canonical, canonicalBytes: values.canonical });
   }
-  if (operation === 'fighter_generation') for (const [index, source] of ['side', 'upright', 'crouch'].entries()) {
+  // An extra-move run imports the same sealed sources, so it carries their checkpoints too.
+  if (operation === 'fighter_generation' || retryAction !== 'idle') for (const [index, source] of ['side', 'upright', 'crouch'].entries()) {
     const sealed = sealedSources[source as keyof typeof sealedSources];
     await target.db.prepare(`INSERT INTO generation_artifact_checkpoints (
       run_id, artifact_kind, artifact_name, stage_index, tier, status, clean_version_id,
@@ -1709,4 +1714,95 @@ describe('video sprite review handlers', () => {
       )).status).toBe(200);
     } finally { await target.mf.dispose(); }
   }, 30_000);
+});
+
+
+describe('review-gated extra Video moves for an active reviewed Champion', () => {
+  async function liveChampionWithFireballReview(): Promise<{ harness: Harness; review: ReviewSeed }> {
+    const harness = await createHarness();
+    await harness.db.batch([
+      harness.db.prepare(`UPDATE fighters SET quality_tier = 'champion' WHERE id = ?`).bind(FIGHTER_ID),
+      harness.db.prepare(`UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?`).bind(FIGHTER_ID),
+      // One of the 11 approved live actions; the extra flow must never touch it.
+      harness.db.prepare(`INSERT INTO sprites (
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, frame_w, frame_h,
+        frame_count, processing_version, content_hash, raw_content_hash, animation_format
+      ) VALUES ('live-idle', ?, 'idle', 'champion', 'live/idle', 'live/idle-raw', 192, 256, 8, 6,
+        'aa', 'bb', 'video-dense-v1')`).bind(FIGHTER_ID),
+    ]);
+    const [review] = await seedReviews(harness, 0, 'fighter_retry_animation', undefined, 'fireball');
+    // The reviewed Champion format is processing version 6.
+    await harness.db.batch([
+      harness.db.prepare(`UPDATE sprite_versions SET processing_version = 6 WHERE fighter_id = ? AND animation_name = 'fireball'`)
+        .bind(FIGHTER_ID),
+      harness.db.prepare(`UPDATE video_sprite_candidate_revisions SET processing_version = 6 WHERE candidate_id = ?`)
+        .bind(review.candidateId),
+    ]);
+    return { harness, review };
+  }
+  const liveIdle = (h: Harness) => h.db.prepare(
+    `SELECT blob_key, content_hash FROM sprites WHERE fighter_id = ? AND animation_name = 'idle'`,
+  ).bind(FIGHTER_ID).first();
+  const liveFireball = (h: Harness) => h.db.prepare(
+    `SELECT blob_key FROM sprites WHERE fighter_id = ? AND animation_name = 'fireball'`,
+  ).bind(FIGHTER_ID).first<{ blob_key: string }>();
+  const publication = (review: ReviewSeed) => new Request('https://api.insertplayer.ai/extra', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ jobId: review.jobId }),
+  });
+
+  it('reviews and approves an extra move without publishing it, then activates and rolls back only that move', async () => {
+    const { harness, review } = await liveChampionWithFireballReview();
+    try {
+      const pending = await getVideoSpriteReview(new Request('https://api.insertplayer.ai/r'), harness.env, AUTH, review.jobId);
+      expect(pending.status).toBe(200);
+      const pendingBody = await pending.json() as { review: Record<string, unknown> };
+      expect(pendingBody.review).toMatchObject({
+        action: 'fireball', extraMove: 'fireball', status: 'awaiting_review',
+        sequenceOrder: VIDEO_SPRITE_ACTIONS.length, continuationAvailable: false,
+      });
+      // Activation before approval publishes nothing.
+      const early = await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
+      expect(early.status).not.toBe(200);
+      expect(await liveFireball(harness)).toBeNull();
+
+      const approved = await approveVideoSpriteReview(decision(review), harness.env, AUTH, review.jobId);
+      expect(approved.status).toBe(200);
+      expect(await liveFireball(harness)).toBeNull();
+      const run = await harness.db.prepare('SELECT status FROM generation_artifact_runs WHERE id = ?').bind(RUN_ID).first();
+      const job = await harness.db.prepare('SELECT stage, review_status FROM generation_jobs WHERE id = ?').bind(review.jobId).first();
+      expect(run).toEqual({ status: 'succeeded' });
+      expect(job).toEqual({ stage: 'complete', review_status: 'approved' });
+
+      const nonAdmin = await activateAdminArcadeVideoExtra(publication(review), harness.env, NON_ADMIN_AUTH, FIGHTER_ID);
+      expect(nonAdmin.status).toBe(403);
+      const activated = await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
+      expect(activated.status).toBe(200);
+      expect(await activated.json()).toMatchObject({ animation: 'fireball', jobId: review.jobId, published: true });
+      expect((await liveFireball(harness))?.blob_key).toBe(review.runtimeKey);
+      expect(await liveIdle(harness)).toEqual({ blob_key: 'live/idle', content_hash: 'aa' });
+
+      const again = await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
+      expect(again.status).toBe(200);
+
+      const rolledBack = await rollbackAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
+      expect(await rolledBack.json()).toMatchObject({ animation: 'fireball', published: false, removed: true });
+      expect(await liveFireball(harness)).toBeNull();
+      expect(await liveIdle(harness)).toEqual({ blob_key: 'live/idle', content_hash: 'aa' });
+      // The approved version is preserved, so it can be published again.
+      expect((await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID)).status).toBe(200);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('keeps an ordinary retry of a full-run action outside the review-gated Video endpoints', async () => {
+    const harness = await createHarness();
+    try {
+      const [review] = await seedReviews(harness, 0, 'fighter_retry_animation');
+      const response = await getVideoSpriteReview(new Request('https://api.insertplayer.ai/r'), harness.env, AUTH, review.jobId);
+      expect(response.status).toBe(404);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
 });

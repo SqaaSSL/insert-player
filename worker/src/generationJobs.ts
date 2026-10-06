@@ -15,7 +15,7 @@ import type {
   QualityTier,
 } from './types';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
-import { VIDEO_SPRITE_ACTIONS } from '../../src/services/VideoSpriteCompileContract';
+import { VIDEO_SPRITE_ACTIONS, isVideoSpriteExtraAction } from '../../src/services/VideoSpriteCompileContract';
 import {
   generationCreationFlowAvailable,
   parseRequestedGenerationCreationFlow,
@@ -671,7 +671,16 @@ export async function createGenerationJob(
       403,
     );
   }
-  if (creationFlow === 'video' && operation !== 'fighter_generation') {
+  // One extra special move (fireball/uppercut) for an existing reviewed
+  // Champion: admin-only, studio-curated, from its sealed canonical sources.
+  const reviewedVideoExtra = creationFlow === 'video'
+    && operation === 'fighter_retry_animation'
+    && targetKind === 'animation'
+    && isVideoSpriteExtraAction(targetName)
+    && auth.user.plan_tier === 'admin'
+    && options.videoGenerationPolicy === STUDIO_CURATED_VIDEO_POLICY
+    && Boolean(options.reviewedCanonicalSources);
+  if (creationFlow === 'video' && operation !== 'fighter_generation' && !reviewedVideoExtra) {
     return rejectReservedJob(
       env,
       auth.userId,
@@ -692,7 +701,8 @@ export async function createGenerationJob(
       authorization.crouch_view_blob_key === reviewedCanonicalSources.sources.crouch.processed.blobKey &&
       authorization.crouch_view_raw_blob_key === reviewedCanonicalSources.sources.crouch.raw.blobKey;
     if (
-      auth.user.plan_tier !== 'admin' || creationFlow !== 'video' || operation !== 'fighter_generation' ||
+      auth.user.plan_tier !== 'admin' || creationFlow !== 'video' ||
+      (operation !== 'fighter_generation' && !reviewedVideoExtra) ||
       reviewedCanonicalSources.fighterId !== fighterId ||
       reviewedCanonicalSources.ownerUserId !== auth.userId ||
       (!authorization.continuation_run_id && !keysMatchAuthorization)
@@ -836,6 +846,12 @@ export async function createGenerationJob(
         operation === 'fighter_generation' &&
         authorization.resume_run_operation === 'fighter_generation' &&
         (authorization.resume_run_approved_action_count ?? 0) < VIDEO_SPRITE_ACTIONS.length
+      ) || (
+        // An extra move's run only resumes a job that failed before any candidate.
+        reviewedVideoExtra &&
+        authorization.resume_run_operation === 'fighter_retry_animation' &&
+        authorization.resume_candidate_status === null &&
+        (authorization.resume_run_approved_action_count ?? 0) === 0
       )) &&
       (creationFlow !== 'video' || authorization.resume_child_job_id === null);
     if (!validContinuation) {
@@ -850,7 +866,7 @@ export async function createGenerationJob(
     }
   }
   if (expansion && operation !== 'fighter_upgrade') return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Expansion requires an upgrade authorization', 400);
-  if (operation === 'fighter_retry_animation' && targetName && !authorizedAnimations.includes(targetName)) {
+  if (operation === 'fighter_retry_animation' && targetName && !authorizedAnimations.includes(targetName) && !reviewedVideoExtra) {
     return rejectReservedJob(env, auth.userId, purchaseId, fighterId, 'Animation is outside the authorized package; the unused reservation was released', 400);
   }
   const targetError = validateTarget(operation, targetKind, targetName);

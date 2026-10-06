@@ -34,6 +34,7 @@ import {
 import { prefersHighDensitySpriteTextures } from '../game/sprites/SpriteRenderQuality.ts';
 import {
   isTemplateOnlyFighterIdentity,
+  COMBAT_SPECIAL_ANIMATION_NAMES,
   PLAYABLE_ANIMATION_NAMES,
 } from './PlayableFighterAssets.ts';
 import {
@@ -572,7 +573,7 @@ export function cloudSpritesForImport(
   // and the authored victory/KO finale. Other combat moves never render there.
   const needed = new Set<string>(options.gameMode === 'aura'
     ? [...AURA_LOADABLE_ANIMATION_NAMES, 'idle', 'victory', 'ko']
-    : PLAYABLE_ANIMATION_NAMES);
+    : [...PLAYABLE_ANIMATION_NAMES, ...COMBAT_SPECIAL_ANIMATION_NAMES]);
   return sprites.filter((sprite) => needed.has(sprite.animationName));
 }
 

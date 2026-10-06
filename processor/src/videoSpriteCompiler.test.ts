@@ -176,6 +176,19 @@ test('rejects stale lineage hashes before invoking media tools', async () => {
   assert.equal(invoked, false);
 });
 
+test('accepts the reviewed extra moves and still rejects unknown actions', () => {
+  for (const action of ['fireball', 'uppercut'] as const) {
+    assert.equal(
+      parseVideoSpriteCompileRequest({ ...request(mp4Fixture(), Buffer.from('canonical')), action }).action,
+      action,
+    );
+  }
+  assert.throws(
+    () => parseVideoSpriteCompileRequest({ ...request(mp4Fixture(), Buffer.from('canonical')), action: 'aura_shrug' }),
+    (error: unknown) => error instanceof VideoSpriteCompileError && error.code === 'invalid_action',
+  );
+});
+
 test('validates the bounded request and maps compiler failures to stable API responses', () => {
   assert.throws(
     () => parseVideoSpriteCompileRequest({
