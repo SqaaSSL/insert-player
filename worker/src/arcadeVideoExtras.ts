@@ -60,17 +60,28 @@ async function loadOfficialChampion(env: Env, auth: AuthContext, fighterId: stri
   `).bind(fighterId, auth.userId).first<ExtraFighterRow>();
 }
 
+/**
+ * video-dense-v1 processing versions whose runtime contract is identical:
+ * 192x256 runtime / 768x1024 HQ cells, 24 fps sampling, the same per-action
+ * sequence formats and root-at-feet origin. v6 only clamps root registration
+ * so a wide pose is never cropped (migration 0032); reviewed activation and
+ * the seed script already accept a mixed v5/v6 set. A v6 extra therefore
+ * renders consistently next to v5 sheets. Legacy sheets stay excluded.
+ */
+export const EXTRA_COMPATIBLE_VIDEO_PROCESSING_VERSIONS = [5, VIDEO_SPRITE_PROCESSING_VERSION] as const;
+
 /** The 11 published actions must already be reviewed video-dense-v1 sprites, so the extra matches them. */
-async function hasCompleteReviewedVideoSet(env: Env, fighterId: string): Promise<boolean> {
+export async function hasCompleteReviewedVideoSet(env: Env, fighterId: string): Promise<boolean> {
   const placeholders = VIDEO_SPRITE_ACTIONS.map(() => '?').join(', ');
+  const versions = EXTRA_COMPATIBLE_VIDEO_PROCESSING_VERSIONS.map(() => '?').join(', ');
   const row = await env.DB.prepare(`
     SELECT COUNT(DISTINCT animation_name) AS n FROM sprites
     WHERE fighter_id = ? AND quality_tier = 'champion'
-      AND animation_format = ? AND processing_version = ?
+      AND animation_format = ? AND processing_version IN (${versions})
       AND frame_w = ? AND frame_h = ?
       AND animation_name IN (${placeholders})
   `).bind(
-    fighterId, VIDEO_SPRITE_ANIMATION_FORMAT, VIDEO_SPRITE_PROCESSING_VERSION,
+    fighterId, VIDEO_SPRITE_ANIMATION_FORMAT, ...EXTRA_COMPATIBLE_VIDEO_PROCESSING_VERSIONS,
     VIDEO_SPRITE_FRAME_WIDTH, VIDEO_SPRITE_FRAME_HEIGHT, ...VIDEO_SPRITE_ACTIONS,
   ).first<{ n: number }>();
   return (row?.n ?? 0) === VIDEO_SPRITE_ACTIONS.length;
@@ -115,7 +126,7 @@ export async function startAdminArcadeVideoExtraGeneration(
   if (fighter.quality_tier !== 'champion') return json({ error: 'Extra Video moves are for Champion fighters' }, 409);
   if (!await hasCompleteReviewedVideoSet(env, fighterId)) {
     return json({
-      error: 'The fighter needs its 11 reviewed video-dense-v1 Champion actions before an extra move',
+      error: 'The fighter needs its 11 reviewed video-dense-v1 (processing v5 or v6) Champion actions before an extra move',
       code: 'video_extra_requires_reviewed_video_set',
     }, 409);
   }

@@ -19,7 +19,7 @@ import {
   stageApprovedVideoSpriteRecuration,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
-import { activateAdminArcadeVideoExtra, rollbackAdminArcadeVideoExtra } from './arcadeVideoExtras';
+import { activateAdminArcadeVideoExtra, hasCompleteReviewedVideoSet, rollbackAdminArcadeVideoExtra } from './arcadeVideoExtras';
 import type { AuthContext, Env } from './types';
 
 const USER_ID = 'video-review-user';
@@ -1803,6 +1803,49 @@ describe('review-gated extra Video moves for an active reviewed Champion', () =>
       expect(response.status).toBe(404);
     } finally {
       await harness.mf.dispose();
+    }
+  });
+});
+
+describe('extra Video move start gate', () => {
+  async function seedLiveSet(h: Harness, rows: Array<{ name: string; version: number; format?: string }>) {
+    await h.db.batch(rows.map((row, index) => h.db.prepare(`INSERT INTO sprites (
+      id, fighter_id, animation_name, quality_tier, blob_key, frame_w, frame_h, frame_count,
+      processing_version, content_hash, animation_format
+    ) VALUES (?, ?, ?, 'champion', ?, 192, 256, 8, ?, 'hh', ?)`).bind(
+      'live-' + index, FIGHTER_ID, row.name, 'live/' + row.name, row.version, row.format ?? 'video-dense-v1',
+    )));
+  }
+
+  it('admits a mixed v5/v6 reviewed set (Trump/Lamine/Elon shape) and an all-v6 set', async () => {
+    const mixed = await createHarness();
+    const allV6 = await createHarness();
+    try {
+      await seedLiveSet(mixed, VIDEO_SPRITE_ACTIONS.map((name) => ({ name, version: name === 'idle' ? 6 : 5 })));
+      await seedLiveSet(allV6, VIDEO_SPRITE_ACTIONS.map((name) => ({ name, version: 6 })));
+      expect(await hasCompleteReviewedVideoSet(mixed.env, FIGHTER_ID)).toBe(true);
+      expect(await hasCompleteReviewedVideoSet(allV6.env, FIGHTER_ID)).toBe(true);
+    } finally {
+      await mixed.mf.dispose();
+      await allV6.mf.dispose();
+    }
+  });
+
+  it('refuses legacy sheets, unknown processing versions and an incomplete set', async () => {
+    const legacy = await createHarness();
+    const unknown = await createHarness();
+    const incomplete = await createHarness();
+    try {
+      await seedLiveSet(legacy, VIDEO_SPRITE_ACTIONS.map((name) => ({ name, version: 5, format: 'legacy' })));
+      await seedLiveSet(unknown, VIDEO_SPRITE_ACTIONS.map((name) => ({ name, version: name === 'ko' ? 4 : 6 })));
+      await seedLiveSet(incomplete, VIDEO_SPRITE_ACTIONS.slice(0, 10).map((name) => ({ name, version: 6 })));
+      expect(await hasCompleteReviewedVideoSet(legacy.env, FIGHTER_ID)).toBe(false);
+      expect(await hasCompleteReviewedVideoSet(unknown.env, FIGHTER_ID)).toBe(false);
+      expect(await hasCompleteReviewedVideoSet(incomplete.env, FIGHTER_ID)).toBe(false);
+    } finally {
+      await legacy.mf.dispose();
+      await unknown.mf.dispose();
+      await incomplete.mf.dispose();
     }
   });
 });
