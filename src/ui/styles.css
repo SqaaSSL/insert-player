@@ -5760,6 +5760,87 @@
   }
 }
 
+/* Fight touch cabinet, portrait phones: a SNES/PSP-style d-pad instead of an
+   arcade stick with arrows, and five well-spaced buttons (no uppercut).
+   The whole cross is one touch surface (directions come from the finger's
+   position against its centre), so the thumb can roll between directions. */
+@media (pointer: coarse) and (orientation: portrait) {
+  .fight-keys__player--touch-fight .fight-keys__movement-label,
+  .fight-keys__player--touch-fight .fight-keys__player-label { display: none; }
+  .fight-keys__player--touch-fight .fight-keys__stick {
+    position: relative;
+    grid-template-columns: 42px 42px 42px;
+    grid-template-rows: 42px 42px 42px;
+  }
+  .fight-keys__player--touch-fight .fight-keys__direction {
+    pointer-events: none;
+    width: 42px; height: 42px;
+    border-radius: 6px;
+    background: linear-gradient(180deg, #3a3542, #1f1c25);
+    box-shadow: inset 0 1px 0 #ffffff1f, 0 2px 0 #050407;
+  }
+  .fight-keys__player--touch-fight .fight-keys__direction[data-active="true"] {
+    background: linear-gradient(180deg, #6b5230, #3d2e1c);
+    text-shadow: none;
+  }
+  .fight-keys__dpad-arm {
+    display: block; width: 0; height: 0;
+    border: 7px solid transparent;
+    opacity: 0.55;
+  }
+  .fight-keys__direction--up .fight-keys__dpad-arm { border-bottom-color: #d9d4de; margin-top: -7px; }
+  .fight-keys__direction--down .fight-keys__dpad-arm { border-top-color: #d9d4de; margin-bottom: -7px; }
+  .fight-keys__direction--left .fight-keys__dpad-arm { border-right-color: #d9d4de; margin-left: -7px; }
+  .fight-keys__direction--right .fight-keys__dpad-arm { border-left-color: #d9d4de; margin-right: -7px; }
+  /* The touch surface covers the whole cross; its knob is not drawn. */
+  .fight-keys__player--touch-fight .fight-keys__touch-stick {
+    position: absolute; inset: 0; width: auto; height: auto;
+    grid-column: 1 / -1; grid-row: 1 / -1; z-index: 2;
+    border-radius: 12px;
+    background: radial-gradient(circle at center, #1a1720 0 20px, transparent 21px);
+  }
+  .fight-keys__player--touch-fight .fight-keys__stick-base,
+  .fight-keys__player--touch-fight .fight-keys__stick-knob { display: none; }
+  .fight-keys__player--touch-fight .fight-keys__deck { justify-content: space-between; gap: 12px; }
+  .fight-keys__player--touch-fight .fight-keys__primary { gap: 12px; }
+  .fight-keys__player--touch-fight .fight-keys__row { column-gap: 12px; }
+  .fight-keys__player--touch-fight .fight-keys__cap { width: 56px; height: 56px; font-size: 11px; }
+  .fight-keys__player--touch-fight .fight-keys__primary .fight-keys__button { min-width: 56px; }
+  .fight-keys__player--touch-fight .fight-keys__utility { padding-left: 4px; display: flex; align-items: center; }
+  .fight-keys__player--touch-fight .fight-keys__utility .fight-keys__cap { width: 60px; height: 60px; }
+}
+@media (pointer: coarse) and (orientation: portrait) and (min-width: 380px) {
+  .fight-keys__player--touch-fight .fight-keys__stick {
+    grid-template-columns: 46px 46px 46px;
+    grid-template-rows: 46px 46px 46px;
+  }
+  .fight-keys__player--touch-fight .fight-keys__direction { width: 46px; height: 46px; }
+  .fight-keys__player--touch-fight .fight-keys__cap { width: 60px; height: 60px; }
+  .fight-keys__player--touch-fight .fight-keys__primary .fight-keys__button { min-width: 60px; }
+  .fight-keys__player--touch-fight .fight-keys__utility .fight-keys__cap { width: 64px; height: 64px; }
+}
+
+/* Portrait phones: the start card uses the whole arena width, with the
+   player's fighter large enough to read each move as the buttons light up. */
+@media (pointer: coarse) and (orientation: portrait) {
+  .game-shell.is-combat .combat-start {
+    left: 12px; right: 12px; width: auto; max-width: none;
+    top: 72px; bottom: 12px;
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto auto;
+    align-items: center; justify-items: center; gap: 10px; padding: 12px;
+    transform: none; translate: none;
+  }
+  /* The start card and the arena already say it is the demo. */
+  .trial-match-badge { display: none; }
+  .game-shell.is-combat .combat-start:has(.combat-move-preview) { grid-template-columns: minmax(0, 1fr); }
+  .game-shell.is-combat .combat-move-preview { width: 100%; height: 100%; min-height: 0; }
+  .game-shell.is-combat .combat-move-preview .gallery-preview__sprite { height: 100%; max-height: 240px; }
+  .game-shell.is-combat .combat-start__copy { align-items: center; text-align: center; }
+  .game-shell.is-combat .combat-start__actions { width: 100%; }
+  .game-shell.is-combat .combat-start__actions .asf-btn { width: 100%; }
+  .game-shell.is-combat .combat-start small { display: none; }
+}
+
 /* Phones have their own system Back; an in-game Back/Exit Demo button only
    takes space and invites mis-taps. Pause stays (it holds Quit). */
 @media (pointer: coarse) {

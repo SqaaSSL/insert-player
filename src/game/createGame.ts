@@ -7,6 +7,24 @@ import { GAME_WIDTH, GAME_HEIGHT } from './constants.ts';
 import { setPendingLaunchTarget, type GameLaunchTarget } from './launchState.ts';
 import { getAuraCanvasSize } from './aura/AuraViewport.ts';
 
+/**
+ * Portrait phones: a 16:9 arena in a tall screen left fighters tiny and a
+ * black band under the HUD. Give Fight a canvas shaped like the space between
+ * the HUD and the touch cabinet; the camera shows that slice of the 1024px
+ * stage and follows the fighters. Null keeps the full stage.
+ */
+export function portraitFightCanvasWidth(viewportWidth: number, viewportHeight: number): number | null {
+  if (viewportHeight <= viewportWidth) return null;
+  const arenaHeight = viewportHeight - PORTRAIT_FIGHT_CHROME_PX;
+  if (arenaHeight <= 0) return null;
+  const width = Math.round((GAME_HEIGHT * viewportWidth) / arenaHeight);
+  return Math.max(PORTRAIT_FIGHT_MIN_WIDTH, Math.min(GAME_WIDTH, width));
+}
+/** Touch cabinet (~250px) plus the HUD row (~64px) on a portrait phone. */
+const PORTRAIT_FIGHT_CHROME_PX = 314;
+/** Never narrower than this many world px, so two fighters always fit. */
+const PORTRAIT_FIGHT_MIN_WIDTH = 520;
+
 export function createGame(parent: string, launchTarget?: GameLaunchTarget | null): Phaser.Game {
   setPendingLaunchTarget(launchTarget ?? null);
   // Touch devices render inside the CSS-rotated portrait shell, whose
@@ -20,9 +38,11 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
     typeof window === 'undefined' ? GAME_WIDTH : window.innerWidth,
     typeof window === 'undefined' ? GAME_HEIGHT : window.innerHeight,
   );
+  const portraitFight = !isAura && coarsePointer && launchTarget?.sceneKey === 'FightScene'
+    ? portraitFightCanvasWidth(window.innerWidth, window.innerHeight) : null;
   const config: Phaser.Types.Core.GameConfig = {
     type: Phaser.AUTO,
-    width: isAura ? auraSize.width : GAME_WIDTH,
+    width: isAura ? auraSize.width : portraitFight ?? GAME_WIDTH,
     height: isAura ? auraSize.height : GAME_HEIGHT,
     parent,
     backgroundColor: '#000000',

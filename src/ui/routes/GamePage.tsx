@@ -240,6 +240,9 @@ export function GamePage({
   const updateSavedBattle = (battle: SavedBattle) => {
     if (battleCapture && battleCaptureId.current === battleCapture.clientBattleId) setSavedBattle(battle);
   };
+  // Portrait phones: no VS card (FightScene skips it) and a full-width start card.
+  const portraitTouch = typeof window !== 'undefined'
+    && window.matchMedia?.('(pointer: coarse) and (orientation: portrait)').matches === true;
   const finisher = <BattleFinisherPanel key={battleCapture?.clientBattleId ?? 'preparing'} capture={finisherCapture}
     authStatus={authStatus} authSessionKey={authSessionKey} onSignIn={onSignIn} onBuyCredits={onBuyCredits}
     initialBattle={savedBattle ?? undefined} onBattleChange={updateSavedBattle} />;
@@ -687,7 +690,7 @@ export function GamePage({
           <Suspense fallback={null}><DevGameplayCapture /></Suspense>
         ) : null}
       {isRush || isAura ? null : <FightHud />}
-      {isRush || isAura ? null : <FightIntroOverlay />}
+      {isRush || isAura || portraitTouch ? null : <FightIntroOverlay />}
       {isRush || isAura ? null : <FightAnnouncement />}
       {!isAura && loadingPhase === 'hidden' && combatPendingStart ? (
         <CombatStartReady mode={isRush ? 'rush' : 'fight'} playerName={launchTarget.data.p1Name ?? 'Player One'} photoHash={launchTarget.data.p1PhotoHash} onStart={startCombat} />

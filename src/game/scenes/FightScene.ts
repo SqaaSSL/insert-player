@@ -86,6 +86,8 @@ import { getFightDifficultyForStrength } from "../match/FightDifficulty.ts";
  * drops the excess time.
  */
 const MAX_TICKS_PER_FRAME = 5;
+/** Keeps both bodies, not just their centres, inside the portrait camera. */
+const PORTRAIT_SEPARATION_MARGIN = 150;
 
 function getSignatureStageTextureKey(stageId: StageThemeId): string {
   return `stage_signature_${stageId}`;
@@ -358,6 +360,8 @@ export class FightScene extends Phaser.Scene {
       p1Personality,
       p2Personality,
       p2Difficulty: this.p2Difficulty ?? 1,
+      ...(this.portraitViewWidth() && !this.online
+        ? { maxSeparation: this.portraitViewWidth() - PORTRAIT_SEPARATION_MARGIN } : {}),
     };
     this.sim = new MatchSimulation(simConfig);
     this.recorder = new MatchRecorder(simConfig);
@@ -379,7 +383,7 @@ export class FightScene extends Phaser.Scene {
     // (HUD/overlays, never scales). Everything created up to this point is
     // world unless registered as UI; runtime spawns use markWorld/markUi.
     this.uiObjects.add(crt);
-    this.hud.onRuntimeObject = (obj) => this.markUi(obj);
+    this.hud.onRuntimeObject = (obj) => (this.portraitViewWidth() ? this.markWorld(obj) : this.markUi(obj));
     this.uiCam = this.cameras.add(0, 0, GAME_WIDTH, GAME_HEIGHT);
     this.cameras.main.setBounds(0, 0, GAME_WIDTH, GAME_HEIGHT);
     this.cameras.main.ignore([...this.uiObjects]);
@@ -1294,6 +1298,10 @@ export class FightScene extends Phaser.Scene {
 
   private shouldSkipIntro(): boolean {
     if (!this.introVideoSequenceActive && !this.sim.canSkipIntro) return false;
+    // Portrait phones skip the PLAYER ONE vs PLAYER TWO card as soon as the
+    // sim allows: the loading screen already introduced both fighters, and
+    // the card does not fit a phone. Offline only, so netplay stays in step.
+    if (this.portraitViewWidth() && !this.online) return true;
     return Boolean(
       (this.introEnterKey && Phaser.Input.Keyboard.JustDown(this.introEnterKey)) ||
       (this.introSpaceKey && Phaser.Input.Keyboard.JustDown(this.introSpaceKey)),
@@ -1836,7 +1844,7 @@ export class FightScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.stopFollow();
     cam.setZoom(1);
-    cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    this.centerCameraOnFight(cam);
 
     if (showFightAnnouncement && !this.fightCueFired) {
       this.dispatchAnnounce({ kind: 'fight' });
@@ -1858,7 +1866,7 @@ export class FightScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.stopFollow();
     cam.setZoom(1.03);
-    cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    this.centerCameraOnFight(cam);
 
     this.introRoundNumber = roundNum;
     this.emitIntroState(true, roundNum);
@@ -1883,7 +1891,7 @@ export class FightScene extends Phaser.Scene {
     const cam = this.cameras.main;
     cam.stopFollow();
     cam.setZoom(1);
-    cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+    this.centerCameraOnFight(cam);
 
     if (cinematic && this.online) {
       // Intro clips live in the local cache only, so they would desync the
@@ -1899,6 +1907,7 @@ export class FightScene extends Phaser.Scene {
 
   update(time: number, delta: number): void {
     if (!this.ready) return;
+    this.followFightersInPortrait(delta);
     if (this.paused || this.startGate.waiting) return;
 
     this.inputMgr.poll();
@@ -1955,6 +1964,36 @@ export class FightScene extends Phaser.Scene {
   }
 
   /** Route a runtime-created world object to the world camera only. */
+  /**
+   * Portrait phones get a canvas narrower than the 1024px stage (see
+   * createGame). The camera then shows the fighters bigger and follows them,
+   * Street Fighter style; the sim keeps them within that width.
+   */
+  private portraitViewWidth(): number {
+    const width = this.scale?.width ?? GAME_WIDTH;
+    return width < GAME_WIDTH ? width : 0;
+  }
+
+  private fightCameraScrollX(): number {
+    const width = this.portraitViewWidth();
+    const mid = this.sim ? (this.sim.p1.x + this.sim.p2.x) / 2 : GAME_WIDTH / 2;
+    return Phaser.Math.Clamp(mid - width / 2, 0, GAME_WIDTH - width);
+  }
+
+  private centerCameraOnFight(cam: Phaser.Cameras.Scene2D.Camera): void {
+    if (!this.portraitViewWidth()) { cam.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2); return; }
+    cam.setScroll(this.fightCameraScrollX(), 0);
+  }
+
+  private followFightersInPortrait(delta: number): void {
+    if (!this.portraitViewWidth() || !this.sim) return;
+    const cam = this.cameras.main;
+    const target = this.fightCameraScrollX();
+    // Ease towards the pair; ~90% of the way in a quarter second.
+    const blend = 1 - Math.pow(0.0001, Math.min(delta, 100) / 1000);
+    cam.scrollX += (target - cam.scrollX) * blend;
+  }
+
   private markWorld<T extends Phaser.GameObjects.GameObject>(obj: T): T {
     this.uiCam?.ignore(obj);
     return obj;

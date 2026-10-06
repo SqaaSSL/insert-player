@@ -19,7 +19,7 @@ describe('isolated character movement previews', () => {
   });
 
   it('describes the procedural effects behind special move gestures', () => {
-    expect(controlPreviewMove({ ...EMPTY_INPUT, fireball: true }, 'fight')).toMatchObject({ animation: 'high_punch', note: 'This gesture launches a projectile.' });
+    expect(controlPreviewMove({ ...EMPTY_INPUT, fireball: true }, 'fight')).toMatchObject({ animation: 'fireball', note: 'This gesture launches a projectile.' });
     expect(controlPreviewMove({ ...EMPTY_INPUT, super: true }, 'fight')?.note).toContain('full meter');
   });
 

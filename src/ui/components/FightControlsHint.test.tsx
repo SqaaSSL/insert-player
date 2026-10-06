@@ -98,6 +98,7 @@ describe('FightControlsHint arcade panel', () => {
     expect(markup).toContain('aria-label="Kick, P1"');
     expect(markup).toContain('aria-label="Jump, P1"');
     expect(markup).toContain('fight-keys__touch-stick');
+    // Rush keeps its Jump button (the uppercut slot): d-pad (4) + six actions.
     expect(markup.match(/<button /g)).toHaveLength(10);
     expect(markup).not.toContain('arcade-keyboard');
     expect(markup).not.toContain('fight-keys__players');
@@ -107,7 +108,7 @@ describe('FightControlsHint arcade panel', () => {
     vi.mocked(useArcadeTouchLayout).mockReturnValue(true);
     const markup = renderToStaticMarkup(<FightControlsHint disabled />);
     expect(markup).toContain('P1 touch controls');
-    expect(markup.match(/disabled=""/g)).toHaveLength(10);
+    expect(markup.match(/disabled=""/g)).toHaveLength(9);
     expect(markup).toContain('needs a full meter');
     expect(markup).not.toContain('arcade-keyboard');
   });

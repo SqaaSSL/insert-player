@@ -41,7 +41,7 @@ export function TouchArcadePanel({ mode, playerLabel, state, disabled = false, h
         ? <span className="fight-keys__action">{action === 'guard' ? 'Hold' : charging ? 'Charge' : 'Ready'}</span> : null}
     </button>;
   };
-  return <div className="fight-keys__player fight-keys__player--touch" role="group" aria-label={`${playerLabel} touch controls`}>
+  return <div className={`fight-keys__player fight-keys__player--touch fight-keys__player--touch-${mode}`} role="group" aria-label={`${playerLabel} touch controls`}>
     <span className="fight-keys__fasteners" aria-hidden="true"><i /><i /><i /><i /></span>
     <strong className="fight-keys__player-label">{playerLabel}</strong>
     <div className="fight-keys__deck">
@@ -51,8 +51,8 @@ export function TouchArcadePanel({ mode, playerLabel, state, disabled = false, h
             className={`fight-keys__direction fight-keys__direction--${action}`}
             data-action={action} data-active={held(action)} disabled={disabled}
             aria-label={`${label(action)}, ${playerLabel}`} aria-pressed={held(action)} {...input.button(action)}>
-            <span aria-hidden="true">{({ up: '↑', left: '←', down: '↓', right: '→' })[action]}</span>
-            {mode === 'fight' && (action === 'up' || action === 'down') ? <small>{label(action)}</small> : null}
+            {/* A d-pad arm: the cross shape says the direction, no arrow or label needed. */}
+            <span className="fight-keys__dpad-arm" aria-hidden="true" />
           </button>)}
           <div className="fight-keys__touch-stick" aria-label="Drag joystick to move" {...input.joystick}>
             <span className="fight-keys__stick-base" aria-hidden="true" />
@@ -67,11 +67,12 @@ export function TouchArcadePanel({ mode, playerLabel, state, disabled = false, h
       </div>
       <div className="fight-keys__actions">
         <div className="fight-keys__primary" role="group" aria-label="Four action buttons">
-          <div className="fight-keys__row">{(['fireball', 'uppercut'] as const).map(actionButton)}</div>
+          {/* Fight has no uppercut button: Champions have no uppercut animation, so it only replayed the punch. */}
+          <div className="fight-keys__row">{(mode === 'fight' ? ['fireball', 'super'] as const : ['fireball', 'uppercut'] as const).map(actionButton)}</div>
           <div className="fight-keys__row">{(['punch', 'kick'] as const).map(actionButton)}</div>
         </div>
-        <div className="fight-keys__utility" role="group" aria-label="Super and guard">
-          {(['super', 'guard'] as const).map(actionButton)}
+        <div className="fight-keys__utility" role="group" aria-label={mode === 'fight' ? 'Guard' : 'Super and guard'}>
+          {(mode === 'fight' ? ['guard'] as const : ['super', 'guard'] as const).map(actionButton)}
         </div>
       </div>
     </div>
