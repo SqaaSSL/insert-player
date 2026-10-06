@@ -1,4 +1,5 @@
 import type { BattleSummary } from '../../shared/BattleFinisher.ts';
+import { isLowPowerDevice } from '../utils/lowPowerDevice.ts';
 import { BattleCaptureSession, battleWinnerSide } from '../match/BattleCapture.ts';
 import Phaser from "phaser";
 import type { Fighter } from "../fighters/Fighter.ts";
@@ -86,6 +87,13 @@ import { getFightDifficultyForStrength } from "../match/FightDifficulty.ts";
  * drops the excess time.
  */
 const MAX_TICKS_PER_FRAME = 5;
+/**
+ * A weak phone that misses frames would otherwise run up to 5 sim ticks per
+ * rendered frame, which costs more time and drops further behind (a death
+ * spiral). There, catch up at most 2 ticks: the fight slows slightly instead
+ * of stuttering. Offline only; netplay keeps the shared budget.
+ */
+const LOW_POWER_MAX_TICKS_PER_FRAME = 2;
 /** Keeps both bodies, not just their centres, inside the portrait camera. */
 const PORTRAIT_SEPARATION_MARGIN = 150;
 
@@ -185,6 +193,7 @@ export class FightScene extends Phaser.Scene {
   private uiCam: Phaser.Cameras.Scene2D.Camera | null = null;
   private lastHudState: HudStateDetail | null = null;
   private uiObjects = new Set<Phaser.GameObjects.GameObject>();
+  private readonly lowPower = isLowPowerDevice();
   private stageFloorY = GROUND_Y;
   private fighterRenderScale = 1;
   private fighterRenderYOffset = 0;
@@ -1923,7 +1932,7 @@ export class FightScene extends Phaser.Scene {
       // 60 Hz ticks, whatever the display refresh rate.
       this.accumulator = Math.min(
         this.accumulator + delta,
-        FIXED_TIMESTEP * MAX_TICKS_PER_FRAME,
+        FIXED_TIMESTEP * (this.lowPower && !this.online ? LOW_POWER_MAX_TICKS_PER_FRAME : MAX_TICKS_PER_FRAME),
       );
       while (this.accumulator >= FIXED_TIMESTEP) {
         this.accumulator -= FIXED_TIMESTEP;
