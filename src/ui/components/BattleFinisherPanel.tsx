@@ -140,6 +140,10 @@ export function BattleFinisherPanel({ capture, battleId, initialBattle, authStat
   // is saved the demo flag decides; afterwards the server's answer does.
   const included = battle ? Boolean(battle.finisherIncluded) : capture?.summary.experience === 'trial';
   const priceLabel = included ? 'free' : `${BATTLE_FINISHER_CREDIT_COST} credit`;
+  // A fatality is the winner's victory lap. After a loss it stays available,
+  // but as a quiet link rather than a gold button competing with Continue.
+  const summary = battle?.summary ?? capture?.summary;
+  const playerLost = Boolean(summary && (summary.winner === 'p2' || summary.winner === 'rivals'));
   const compactLabel = busy ? 'Preparing fatality…' : finisher?.status === 'queued' ? 'Fatality queued'
     : finisher?.status === 'generating' ? 'Creating fatality…' : finisher?.status === 'ready' ? 'Watch fatality'
       : finisher?.status === 'failed' ? `Retry fatality · ${priceLabel}` : `Fatality · ${priceLabel}`;
@@ -149,8 +153,10 @@ export function BattleFinisherPanel({ capture, battleId, initialBattle, authStat
   if (!expanded) return <section className="battle-finisher battle-finisher--compact" aria-label="Battle finisher">
     {/* The paid offer is secondary on result screens: the next step (Crew, rematch, menu) keeps the visual lead.
         A finished or in-progress fatality is the player's own content, so it stays primary. */}
-    <button className={`asf-btn${finisher && finisher.status !== 'failed' ? ' asf-btn--primary' : ''} battle-finisher__offer`} type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{compactLabel}</button>
-    <p className="battle-finisher__offer-note" role={finisher ? 'status' : undefined}>{compactNote}</p>
+    {playerLost && !finisher
+      ? <button className="battle-text-button battle-finisher__offer battle-finisher__offer--quiet" type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{`Make a fatality anyway · ${priceLabel}`}</button>
+      : <><button className={`asf-btn${finisher && finisher.status !== 'failed' ? ' asf-btn--primary' : ''} battle-finisher__offer`} type="button" aria-expanded={false} onClick={() => setExpanded(true)}>{compactLabel}</button>
+        <p className="battle-finisher__offer-note" role={finisher ? 'status' : undefined}>{compactNote}</p></>}
   </section>;
   return <section className="battle-finisher" aria-label="Battle finisher">
     <div className="battle-finisher__heading"><h3>{finisher?.status === 'ready' ? 'Your fatality is ready.' : 'Fatality'}</h3>
