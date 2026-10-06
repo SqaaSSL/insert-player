@@ -5840,3 +5840,12 @@
   .game-shell.is-combat .combat-start__actions .asf-btn { width: 100%; }
   .game-shell.is-combat .combat-start small { display: none; }
 }
+
+/* Phones have their own system Back; an in-game Back/Exit Demo button only
+   takes space and invites mis-taps. Pause stays (it holds Quit). */
+@media (pointer: coarse) {
+  .game-shell .game-shell__gallery-link,
+  .game-shell .aura-game-toolbar__back {
+    display: none !important;
+  }
+}
