@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { isLowPowerDevice } from './utils/lowPowerDevice.ts';
 import { BootScene } from './scenes/BootScene.ts';
 import { FightScene } from './scenes/FightScene.ts';
 import { RushScene } from './scenes/RushScene.ts';
@@ -34,6 +35,7 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
   const coarsePointer =
     typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches;
   const isAura = launchTarget?.sceneKey === 'AuraScene';
+  const lowPower = isLowPowerDevice();
   const auraSize = getAuraCanvasSize(
     typeof window === 'undefined' ? GAME_WIDTH : window.innerWidth,
     typeof window === 'undefined' ? GAME_HEIGHT : window.innerHeight,
@@ -65,7 +67,10 @@ export function createGame(parent: string, launchTarget?: GameLaunchTarget | nul
     },
     render: {
       pixelArt: false,
-      antialias: true,
+      // Multisampled edges are the first thing a weak phone's GPU cannot
+      // afford at 60 fps; sprites are pre-filtered, so the look barely moves.
+      antialias: !lowPower,
+      powerPreference: 'high-performance',
     },
   };
 
