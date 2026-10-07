@@ -702,6 +702,7 @@ function selectFighters(manifest) {
   if (
     videoReviewExportDir
     && !videoStep
+    && !videoExtraStep
     && !videoReviewInspect
     && videoReviewDecision !== 'adjust'
     && postApprovedRecuration !== 'stage'
@@ -2935,7 +2936,11 @@ export async function runReviewGatedVideoExtraStep({
   token,
   animation,
   reviewedCanonicalManifest,
+  reviewArtifactDir = '',
+  reviewedManifestRunId = '',
+  reviewedManifestSha256 = '',
   requestApi = apiRequest,
+  requestAsset = apiAssetRequest,
   pause = sleep,
   pollIntervalMs = POLL_INTERVAL_MS,
   jobTimeoutMs = JOB_TIMEOUT_MS,
@@ -2996,7 +3001,15 @@ export async function runReviewGatedVideoExtraStep({
   const reviewBody = await requestApi(baseUrl, token, `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review`);
   const review = assertAwaitingVideoReview(reviewBody.review, job);
   printAwaitingVideoReview(fighter, review, mode);
-  return { mode, job, review };
+  // Same private, hash-bound review media as a full-run step, so a decision
+  // can be bound to this run exactly like a normal Video inspection.
+  const descriptor = reviewArtifactDir
+    ? await exportAwaitingVideoReviewArtifact({
+        baseUrl, token, fighter, job, review, destination: reviewArtifactDir,
+        reviewedCanonicalManifest, reviewedManifestRunId, reviewedManifestSha256, requestAsset,
+      })
+    : null;
+  return { mode, job, review, descriptor };
 }
 
 /** Publish (or unpublish) exactly one approved extra move on the live fighter. */
@@ -3820,7 +3833,7 @@ async function main() {
   }
   if (
     target === 'production'
-    && (videoStep || videoReview)
+    && (videoStep || videoReview || videoExtraStep)
     && !/^[1-9][0-9]*$/.test(reviewedManifestRunId)
   ) {
     throw new Error(
@@ -3956,6 +3969,9 @@ async function main() {
       token,
       animation: videoExtraAnimation,
       reviewedCanonicalManifest,
+      reviewArtifactDir: videoReviewExportDir,
+      reviewedManifestRunId,
+      reviewedManifestSha256,
     });
     return;
   }

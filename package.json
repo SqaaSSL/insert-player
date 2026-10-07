@@ -49,6 +49,7 @@
     "arcade:import:reviewed-manual-canonical": "node scripts/import-reviewed-manual-canonical-set.mjs",
     "arcade:import:reviewed-elon-mixed-canonical": "node scripts/import-reviewed-elon-mixed-canonical-set.mjs",
     "arcade:import:reviewed-global-mixed-canonical": "node scripts/import-reviewed-global-mixed-canonical-set.mjs",
+    "arcade:seal:live-canonical": "node scripts/seal-live-canonical-sources.mjs",
     "arcade:archive-experiment": "node scripts/archive-arcade-experiment.mjs",
     "arcade:package:trump-video-roster": "node scripts/package-trump-video-roster.mjs",
     "arcade:activate:trump-video-roster": "node scripts/import-trump-video-roster.mjs",

@@ -14,7 +14,7 @@ on:
           - adjust
           - reject
       slug:
-        description: Exact draft fighter slug
+        description: Exact draft fighter slug, or an active official fighter for an extra move
         required: true
         type: string
       job_id:
@@ -182,6 +182,7 @@ jobs:
             '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
             '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
             '.github/workflows/import-reviewed-manual-canonical-production.yml',
+            '.github/workflows/seal-live-canonical-sources-production.yml',
           ]);
           const path = String(run.path ?? '').split('@', 1)[0];
           if (
@@ -213,6 +214,7 @@ jobs:
           const allowedPaths = new Set([
             '.github/workflows/arcade-video-step-production.yml',
             '.github/workflows/arcade-video-review-production.yml',
+            '.github/workflows/arcade-video-extra-production.yml',
           ]);
           if (
             run.id !== Number(process.env.INSPECTION_RUN_ID) || run.status !== 'completed' ||
@@ -237,9 +239,10 @@ jobs:
           const manifestBytes = readFileSync(process.env.REVIEWED_CANONICAL_MANIFEST);
           const manifest = JSON.parse(manifestBytes);
           const manifestSha = createHash('sha256').update(manifestBytes).digest('hex');
+          // The 11-action run, then the review-gated extra moves (sequence 11, 12).
           const actions = [
             'idle', 'walk', 'high_punch', 'high_kick', 'low_punch', 'low_kick',
-            'jump', 'crouch', 'hit', 'ko', 'victory',
+            'jump', 'crouch', 'hit', 'ko', 'victory', 'fireball', 'uppercut',
           ];
           const assetDefinitions = {
             video: ['video.mp4', 'video/mp4'],

@@ -1,0 +1,231 @@
+name: Seal live canonical sources of an active official fighter
+
+# Read-only: never POSTs sources, calls a provider, generates or activates.
+# Phase "review" exports the six live source PNGs plus a review descriptor for
+# a human. Phase "seal" re-reads the live sources and, only if they are still
+# byte-identical to the descriptor the human approved (by SHA-256, bound to that
+# exact review run), publishes arcade-reviewed-canonical-manifest-<slug>.
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: review first, then seal the approved descriptor
+        required: true
+        default: review
+        type: choice
+        options:
+          - review
+          - seal
+      slug:
+        description: One active official fighter
+        required: true
+        type: choice
+        options:
+          - rosalia-v2
+          - lamine-yamal
+          - elon-musk
+          - donald-trump
+      confirmation:
+        description: REVIEW_LIVE_CANONICAL_SOURCES_PRODUCTION_V1 or SEAL_LIVE_CANONICAL_SOURCES_PRODUCTION_V1
+        required: true
+        type: string
+      safety_confirmation:
+        description: Enter SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION
+        required: true
+        type: string
+      review_run_id:
+        description: Seal only. The successful review run of this workflow whose PNGs a human approved
+        required: false
+        type: string
+      descriptor_sha256:
+        description: Seal only. Exact descriptorSha256 printed by that review run
+        required: false
+        type: string
+      qa_decision:
+        description: Seal only. Enter APPROVE_LIVE_CANONICAL_SOURCES_V1 after reviewing the PNGs
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: production-worker-mutations
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  seal-live-sources:
+    name: ${{ inputs.operation }} live canonical sources (read-only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      REQUESTED_OPERATION: ${{ inputs.operation }}
+      REQUESTED_SLUG: ${{ inputs.slug }}
+      REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
+      SAFETY_CONFIRMATION: ${{ inputs.safety_confirmation }}
+      REVIEW_RUN_ID: ${{ inputs.review_run_id }}
+      APPROVED_DESCRIPTOR_SHA256: ${{ inputs.descriptor_sha256 }}
+      QA_DECISION: ${{ inputs.qa_decision }}
+      ASF_ARCADE_CLERK_SECRET_KEY: ${{ secrets.ASF_LAUNCH_SMOKE_CLERK_KEY }}
+      ASF_ARCADE_ADMIN_CLERK_USER_ID: ${{ secrets.ASF_ARCADE_ADMIN_CLERK_USER_ID }}
+      ASF_WORKER_URL: ${{ vars.ASF_WORKER_URL }}
+      ASF_WORKER_HEALTH_URL: ${{ vars.ASF_WORKER_HEALTH_URL }}
+      CLERK_BACKEND_AUTH_BRIDGE_SECRET: ${{ secrets.CLERK_BACKEND_AUTH_BRIDGE_SECRET }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate the exact source-only request
+        shell: bash
+        run: |
+          case "$REQUESTED_SLUG" in
+            rosalia-v2|lamine-yamal|elon-musk|donald-trump) ;;
+            *) printf '::error::Live canonical sealing is restricted to the active official fighters.\n'; exit 1 ;;
+          esac
+          [[ "$SAFETY_CONFIRMATION" == "SOURCES_ONLY_NO_PROVIDER_NO_GENERATION_NO_ACTIVATION" ]] || {
+            printf '::error::The exact no-provider/no-generation/no-activation confirmation is required.\n'
+            exit 1
+          }
+          case "$REQUESTED_OPERATION" in
+            review)
+              [[ "$REQUESTED_CONFIRMATION" == "REVIEW_LIVE_CANONICAL_SOURCES_PRODUCTION_V1" ]] || {
+                printf '::error::review requires its exact confirmation phrase.\n'; exit 1; }
+              [[ -z "$REVIEW_RUN_ID" && -z "$APPROVED_DESCRIPTOR_SHA256" && -z "$QA_DECISION" ]] || {
+                printf '::error::review takes no approval inputs.\n'; exit 1; }
+              ;;
+            seal)
+              [[ "$REQUESTED_CONFIRMATION" == "SEAL_LIVE_CANONICAL_SOURCES_PRODUCTION_V1" ]] || {
+                printf '::error::seal requires its exact confirmation phrase.\n'; exit 1; }
+              [[ "$REVIEW_RUN_ID" =~ ^[1-9][0-9]*$ ]] || {
+                printf '::error::seal requires the exact review_run_id.\n'; exit 1; }
+              [[ "$APPROVED_DESCRIPTOR_SHA256" =~ ^[a-f0-9]{64}$ ]] || {
+                printf '::error::descriptor_sha256 must be a lowercase SHA-256.\n'; exit 1; }
+              [[ "$QA_DECISION" == "APPROVE_LIVE_CANONICAL_SOURCES_V1" ]] || {
+                printf '::error::The exact human QA decision is required.\n'; exit 1; }
+              ;;
+            *) printf '::error::Unsupported operation.\n'; exit 1 ;;
+          esac
+          [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || {
+            printf '::error::Production Arcade Clerk admin secrets are unavailable.\n'; exit 1; }
+          [[ ${#CLERK_BACKEND_AUTH_BRIDGE_SECRET} -ge 32 ]] || {
+            printf '::error::Production Clerk backend-auth bridge secret is unavailable.\n'; exit 1; }
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+
+      - name: Install pinned dependencies
+        run: |
+          npm ci
+          npm --prefix worker ci
+
+      - name: Pin the live Worker to this reviewed commit
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          const configured = process.env.ASF_WORKER_HEALTH_URL?.trim() ?? '';
+          const workerBase = process.env.ASF_WORKER_URL?.trim() ?? '';
+          if (workerBase !== 'https://api.insertplayer.ai') {
+            throw new Error('Reviewed production operations require exact ASF_WORKER_URL=https://api.insertplayer.ai.');
+          }
+          const expectedTarget = `${workerBase}/health`;
+          const target = configured || expectedTarget;
+          const expectedSha = process.env.GITHUB_SHA?.trim() ?? '';
+          if (!/^[a-f0-9]{40}$/.test(expectedSha) || new URL(target).toString() !== expectedTarget) {
+            throw new Error('Worker health URL and full reviewed commit SHA are required.');
+          }
+          const response = await fetch(target, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+          if (!response.ok) throw new Error(`Worker health failed with HTTP ${response.status}.`);
+          const health = await response.json();
+          const expectedTag = new RegExp(`^prod-${expectedSha}-[1-9][0-9]*$`);
+          if (
+            health?.status !== 'ok' || health.environment !== 'production' ||
+            health.storage?.d1 !== 'bound' || health.storage?.r2 !== 'bound' ||
+            typeof health.workerVersion?.tag !== 'string' ||
+            !expectedTag.test(health.workerVersion.tag)
+          ) throw new Error(`Live Worker is not the healthy production deployment for ${expectedSha}.`);
+          console.log(`Worker health pinned to ${health.workerVersion.tag}.`);
+          NODE
+
+      - name: Export the live sources for human review
+        if: inputs.operation == 'review'
+        run: |
+          npm run arcade:seal:live-canonical -- \
+            --execute-production \
+            --mode=review \
+            --slug="$REQUESTED_SLUG" \
+            --confirm="$REQUESTED_CONFIRMATION" \
+            --confirm-safety="$SAFETY_CONFIRMATION" \
+            --output-dir="$RUNNER_TEMP/live-canonical-review"
+
+      - name: Upload the private review PNGs and descriptor
+        if: inputs.operation == 'review'
+        uses: actions/upload-artifact@v7
+        with:
+          name: arcade-live-canonical-review-${{ inputs.slug }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/live-canonical-review
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Bind the seal to the exact approved review run
+        if: inputs.operation == 'seal'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          metadata="$RUNNER_TEMP/live-canonical-review-run.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEW_RUN_ID" > "$metadata"
+          REVIEW_RUN_METADATA="$metadata" node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const run = JSON.parse(readFileSync(process.env.REVIEW_RUN_METADATA, 'utf8'));
+          const path = String(run.path ?? '').split('@', 1)[0];
+          if (
+            run.id !== Number(process.env.REVIEW_RUN_ID) || run.status !== 'completed' ||
+            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
+            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
+            path !== '.github/workflows/seal-live-canonical-sources-production.yml'
+          ) throw new Error('review_run_id is not a successful review run of this workflow.');
+          NODE
+          destination="$RUNNER_TEMP/approved-review"
+          mkdir -p "$destination"
+          gh run download "$REVIEW_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            --name "arcade-live-canonical-review-$REQUESTED_SLUG-$REVIEW_RUN_ID" --dir "$destination"
+          [[ -f "$destination/live-canonical-review-descriptor.json" ]] || exit 1
+          printf 'APPROVED_DESCRIPTOR=%s\n' "$destination/live-canonical-review-descriptor.json" >> "$GITHUB_ENV"
+
+      - name: Seal only the unchanged approved live sources
+        if: inputs.operation == 'seal'
+        run: |
+          npm run arcade:seal:live-canonical -- \
+            --execute-production \
+            --mode=seal \
+            --slug="$REQUESTED_SLUG" \
+            --confirm="$REQUESTED_CONFIRMATION" \
+            --confirm-safety="$SAFETY_CONFIRMATION" \
+            --qa-decision="$QA_DECISION" \
+            --approved-descriptor="$APPROVED_DESCRIPTOR" \
+            --approved-descriptor-sha256="$APPROVED_DESCRIPTOR_SHA256" \
+            --reviewed-by="$GITHUB_ACTOR" \
+            --output-dir="$RUNNER_TEMP/live-canonical-seal"
+
+      - name: Publish the reviewed-current-v1 handoff for Video
+        if: inputs.operation == 'seal'
+        uses: actions/upload-artifact@v6
+        with:
+          name: arcade-reviewed-canonical-manifest-${{ inputs.slug }}
+          path: |
+            ${{ runner.temp }}/live-canonical-seal/reviewed-canonical-manifest.json
+            ${{ runner.temp }}/live-canonical-seal/reviewed-canonical-operator-manifest.json
+            ${{ runner.temp }}/live-canonical-seal/import-receipt.json
+          if-no-files-found: error
+          retention-days: 90
