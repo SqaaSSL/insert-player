@@ -4,6 +4,13 @@ name: Start, activate or roll back one reviewed Arcade extra move
 # reviewed official Champion. "start" generates one clip and stops at review
 # (inspect/decide with arcade-video-review-production.yml); "activate"
 # publishes only that approved move; "rollback" unpublishes exactly it.
+#
+# No canonical-manifest artifact is needed: approval is permanent. At start
+# the Worker derives the canonical manifest from production and proves it (the
+# six live source PNGs must be SHA-256-identical to the sources recorded for
+# the fighter's approved Video set), records that proof on the job and only
+# then lets the job reach the provider. A mismatch fails closed before any
+# charge or provider call.
 
 on:
   workflow_dispatch:
@@ -33,10 +40,6 @@ on:
         description: Exact confirmation phrase for the selected operation
         required: true
         type: string
-      reviewed_manifest_run_id:
-        description: Start only. Completed approved canonical producer run (e.g. the live canonical seal)
-        required: false
-        type: string
       job_id:
         description: Activate/rollback only. Exact approved extra-move Video job id
         required: false
@@ -62,7 +65,6 @@ jobs:
       REQUESTED_OPERATION: ${{ inputs.operation }}
       REQUESTED_ANIMATION: ${{ inputs.animation }}
       REQUESTED_CONFIRMATION: ${{ inputs.confirmation }}
-      REVIEWED_MANIFEST_RUN_ID: ${{ inputs.reviewed_manifest_run_id }}
       EXTRA_JOB_ID: ${{ inputs.job_id }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -86,8 +88,8 @@ jobs:
           case "$REQUESTED_OPERATION" in
             start)
               expected_confirmation="START_REVIEW_GATED_VIDEO_EXTRA_ANIMATION"
-              [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ && -z "$EXTRA_JOB_ID" ]] || {
-                printf '::error::start requires reviewed_manifest_run_id and no job_id.\n'; exit 1; }
+              [[ -z "$EXTRA_JOB_ID" ]] || {
+                printf '::error::start takes no job_id.\n'; exit 1; }
               ;;
             activate)
               expected_confirmation="ACTIVATE_REVIEWED_ARCADE_EXTRA_ANIMATION"
@@ -147,48 +149,6 @@ jobs:
       - name: Restore and verify the private licensed source
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
-      - name: Download the separately reviewed canonical manifest
-        if: inputs.operation == 'start'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          run_metadata="$RUNNER_TEMP/reviewed-canonical-run.json"
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$REVIEWED_MANIFEST_RUN_ID" > "$run_metadata"
-          REVIEWED_RUN_METADATA="$run_metadata" node --input-type=module <<'NODE'
-          import { readFileSync } from 'node:fs';
-          const run = JSON.parse(readFileSync(process.env.REVIEWED_RUN_METADATA, 'utf8'));
-          const allowedProducerPaths = new Set([
-            '.github/workflows/import-reviewed-xai-canonical-production.yml',
-            '.github/workflows/import-reviewed-elon-mixed-canonical-production.yml',
-            '.github/workflows/import-reviewed-global-mixed-canonical-production.yml',
-            '.github/workflows/import-reviewed-manual-canonical-production.yml',
-            '.github/workflows/seal-live-canonical-sources-production.yml',
-          ]);
-          const producerPath = String(run.path ?? '').split('@', 1)[0];
-          if (
-            run.id !== Number(process.env.REVIEWED_MANIFEST_RUN_ID) || run.status !== 'completed' ||
-            run.conclusion !== 'success' || run.event !== 'workflow_dispatch' ||
-            run.head_repository?.full_name !== process.env.GITHUB_REPOSITORY ||
-            !allowedProducerPaths.has(producerPath)
-          ) {
-            throw new Error(
-              'reviewed_manifest_run_id is not a successful completed run of an approved canonical-import workflow in this repository.',
-            );
-          }
-          console.log(`Reviewed manifest producer pinned to ${producerPath} run ${run.id}.`);
-          NODE
-          destination="$RUNNER_TEMP/reviewed-canonical"
-          mkdir -p "$destination"
-          gh run download "$REVIEWED_MANIFEST_RUN_ID" \
-            --repo "$GITHUB_REPOSITORY" \
-            --name "arcade-reviewed-canonical-manifest-$REQUESTED_SLUG" \
-            --dir "$destination"
-          manifest="$destination/reviewed-canonical-manifest.json"
-          [[ -f "$manifest" ]] || {
-            printf '::error::The reviewed artifact did not contain reviewed-canonical-manifest.json.\n'; exit 1; }
-          printf 'REVIEWED_CANONICAL_MANIFEST_ARG=--reviewed-canonical-manifest=%s\n' "$manifest" >> "$GITHUB_ENV"
-
       - name: Start, activate or roll back exactly one extra move
         shell: bash
         run: |
@@ -200,13 +160,10 @@ jobs:
           )
           case "$REQUESTED_OPERATION" in
             start)
-              [[ -n "${REVIEWED_CANONICAL_MANIFEST_ARG:-}" ]] || {
-                printf '::error::The required reviewed canonical manifest was not bound.\n'; exit 1; }
+              # The approved-source proof is derived and recorded by the Worker.
               args+=(
                 --video-extra-animation="$REQUESTED_ANIMATION"
                 --confirm-video-extra="$REQUESTED_CONFIRMATION"
-                "$REVIEWED_CANONICAL_MANIFEST_ARG"
-                --reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"
                 --video-review-export-dir="$RUNNER_TEMP/video-review"
               )
               ;;

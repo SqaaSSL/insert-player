@@ -405,6 +405,8 @@ export async function createGenerationJob(
     reviewedCanonicalSources?: SealedReviewedCanonicalSources;
     unsealedVideoRestartFromJobId?: string;
     videoGenerationPolicy?: VideoGenerationPolicy;
+    /** Durable audit written before any provider work can start; a failure releases the job. */
+    beforeWorkflowStart?: (jobId: string, runId: string) => Promise<void>;
   } = {},
 ): Promise<Response> {
   const body = await readJsonBody<{
@@ -1197,6 +1199,7 @@ export async function createGenerationJob(
   }
 
   try {
+    if (options.beforeWorkflowStart) await options.beforeWorkflowStart(jobId, runId);
     await startWorkflow(env, jobId);
   } catch (error) {
     console.error(JSON.stringify({

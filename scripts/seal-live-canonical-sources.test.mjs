@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -159,8 +160,9 @@ describe('sealing live canonical sources of an active official fighter', () => {
     expect(workflow).not.toMatch(/\/generate(?:\/|\s|$)|\/approve(?:\/|\s|$)|--activate|PIXCLI_API_KEY|FAL_API_KEY|method: 'POST'/);
   });
 
-  it('lets every Video consumer accept the live seal as a manifest producer', () => {
-    for (const name of ['arcade-video-step-production.yml', 'arcade-video-review-production.yml', 'arcade-video-extra-production.yml']) {
+  it('lets every manifest-bound Video consumer accept the live seal as a producer', () => {
+    // Extra moves no longer consume a manifest artifact (approved-source proof instead).
+    for (const name of ['arcade-video-step-production.yml', 'arcade-video-review-production.yml']) {
       const workflow = readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8');
       expect(workflow).toContain("'.github/workflows/seal-live-canonical-sources-production.yml'");
     }
@@ -177,14 +179,131 @@ describe('extra-move production workflows', () => {
       'ROLLBACK_REVIEWED_ARCADE_EXTRA_ANIMATION', 'group: production-worker-mutations', 'environment: production',
       'expectedTag.test(health.workerVersion.tag)', '--expected-deployed-sha="$GITHUB_SHA"',
       '--video-extra-animation="$REQUESTED_ANIMATION"', '--activate-reviewed-extra', '--rollback-reviewed-extra',
-      '--reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"', '--video-review-export-dir="$RUNNER_TEMP/video-review"',
-      'arcade-video-review-${{ inputs.slug }}-${{ github.run_id }}', 'arcade-reviewed-canonical-manifest-$REQUESTED_SLUG',
+      '--video-review-export-dir="$RUNNER_TEMP/video-review"',
+      'arcade-video-review-${{ inputs.slug }}-${{ github.run_id }}',
       '- fireball', '- uppercut', '- start', '- activate', '- rollback',
     ]) expect(extra).toContain(phrase);
+  });
+
+  it('starts an extra move without any expiring canonical-manifest artifact', () => {
+    for (const absent of [
+      'reviewed_manifest_run_id', 'REVIEWED_MANIFEST_RUN_ID', '--reviewed-canonical-manifest',
+      'arcade-reviewed-canonical-manifest-', 'gh run download',
+    ]) expect(extra).not.toContain(absent);
   });
 
   it('lets the review workflow bind decisions for extra moves', () => {
     expect(review).toContain("'jump', 'crouch', 'hit', 'ko', 'victory', 'fireball', 'uppercut',");
     expect(review).toContain("'.github/workflows/arcade-video-extra-production.yml'");
+    expect(review).toMatch(/reviewed_manifest_run_id:\n {8}description: [^\n]+\n {8}required: false/);
+    expect(review).toContain("if: inputs.reviewed_manifest_run_id != ''");
+    expect(review).toContain('--expected-video-extra-source-proof-sha256="$EXTRA_SOURCE_PROOF_SHA256"');
+  });
+
+  describe('decision binding to a prior inspection', () => {
+    const lines = review.split('\n');
+    const start = lines.findIndex((line) => line.includes('INSPECTION_DESCRIPTOR="$descriptor"'));
+    const end = lines.findIndex((line, index) => index > start && line.trim() === 'NODE');
+    const script = lines.slice(start + 1, end).map((line) => line.slice(10)).join('\n');
+    const directories = [];
+    afterEach(() => {
+      for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+    });
+
+    const hashes = {
+      side: { processedSha256: '1'.repeat(64), rawSha256: '2'.repeat(64) },
+      upright: { processedSha256: '3'.repeat(64), rawSha256: '4'.repeat(64) },
+      crouch: { processedSha256: '5'.repeat(64), rawSha256: '6'.repeat(64) },
+    };
+    const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+    function inspection({ action = 'fireball', proofOverrides = {}, descriptorOverrides = {}, writeProof = true } = {}) {
+      const directory = mkdtempSync(join(tmpdir(), 'inspection-'));
+      directories.push(directory);
+      const assets = {};
+      for (const [name, filename, contentType] of [
+        ['video', 'video.mp4', 'video/mp4'], ['contactSheet', 'contact-sheet.png', 'image/png'],
+        ['uniqueSheet', 'unique-sheet.png', 'image/png'], ['runtime', 'runtime.png', 'image/png'],
+        ['raw', 'raw.png', 'image/png'], ['report', 'report.json', 'application/json'],
+      ]) {
+        writeFileSync(join(directory, filename), `asset:${name}`);
+        assets[name] = { filename, contentType, sha256: sha(`asset:${name}`) };
+      }
+      const proofBytes = JSON.stringify({
+        canonicalSourceHashes: hashes, canonicalSourceMode: 'reviewed-current-v1', fighterId: 'a'.repeat(32),
+        kind: 'approved-video-sources-v1', origins: [{ kind: 'reviewed-video-run', runId: 'c'.repeat(32) }],
+        ...proofOverrides,
+      });
+      if (writeProof) writeFileSync(join(directory, 'source-proof.json'), proofBytes);
+      const descriptor = {
+        schemaVersion: 1, fighter: 'rosalia-v2', fighterId: 'a'.repeat(32), jobId: 'b'.repeat(32),
+        artifactRunId: 'd'.repeat(32), candidateId: 'e'.repeat(32), revision: 1, reportSha256: 'f'.repeat(64),
+        action, sequenceOrder: action === 'fireball' ? 11 : 0, technicalOutcome: 'technical_pass',
+        selectedVideoIndices: [0, 2, 4], sourceFrameCount: 12, animationFormat: 'video-dense-v1',
+        processingVersion: 6, reviewedCanonicalSourceMode: 'reviewed-current-v1',
+        reviewedCanonicalSourceHashes: hashes, reviewedManifestRunId: '', reviewedManifestSha256: '',
+        extraMoveSourceProofSha256: sha(proofBytes), assets, ...descriptorOverrides,
+      };
+      writeFileSync(join(directory, 'review-descriptor.json'), JSON.stringify(descriptor));
+      return { directory, descriptor };
+    }
+
+    function bind({ directory }, manifestPath = '', manifestRunId = '') {
+      const githubEnv = join(directory, 'github-env');
+      writeFileSync(githubEnv, '');
+      const result = spawnSync(process.execPath, ['--input-type=module'], {
+        input: script,
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          INSPECTION_DESCRIPTOR: join(directory, 'review-descriptor.json'),
+          INSPECTION_DIRECTORY: directory,
+          REVIEWED_CANONICAL_MANIFEST: manifestPath,
+          REVIEWED_MANIFEST_RUN_ID: manifestRunId,
+          REQUESTED_SLUG: 'rosalia-v2', JOB_ID: 'b'.repeat(32), CANDIDATE_ID: 'e'.repeat(32),
+          REVISION: '1', REPORT_SHA256: 'f'.repeat(64), REQUESTED_OPERATION: 'approve',
+          SELECTED_VIDEO_INDICES: '[0,2,4]', GITHUB_ENV: githubEnv,
+        },
+      });
+      return { status: result.status, stderr: result.stderr, env: readFileSync(githubEnv, 'utf8') };
+    }
+
+    it('accepts an extra-move inspection bound to its recorded approved-source proof', () => {
+      const bound = inspection();
+      const result = bind(bound);
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.env).toBe(`EXTRA_SOURCE_PROOF_SHA256=${bound.descriptor.extraMoveSourceProofSha256}\n`);
+    });
+
+    it('keeps binding full-run decisions to the downloaded manifest artifact', () => {
+      const bound = inspection({ action: 'idle', writeProof: false });
+      const manifestPath = join(bound.directory, 'reviewed-canonical-manifest.json');
+      const manifestBytes = JSON.stringify({
+        fighterId: 'a'.repeat(32), canonicalSourceMode: 'reviewed-current-v1', canonicalSourceHashes: hashes,
+      });
+      writeFileSync(manifestPath, manifestBytes);
+      const descriptor = {
+        ...bound.descriptor, reviewedManifestRunId: '123', reviewedManifestSha256: sha(manifestBytes),
+        extraMoveSourceProofSha256: null,
+      };
+      writeFileSync(join(bound.directory, 'review-descriptor.json'), JSON.stringify(descriptor));
+      const result = bind(bound, manifestPath, '123');
+      expect(result.stderr).toBe('');
+      expect(result.status).toBe(0);
+      expect(result.env).toBe('');
+      expect(bind(bound, manifestPath, '124').stderr).toMatch(/manifestRunId/);
+    });
+
+    it('rejects a manifest-less binding for a full-run action or a tampered/missing proof', () => {
+      expect(bind(inspection({ action: 'idle' })).stderr).toMatch(/extraMoveOnly/);
+      expect(bind(inspection({ writeProof: false })).stderr).toMatch(/sourceProofSha256/);
+      expect(bind(inspection({ descriptorOverrides: { extraMoveSourceProofSha256: '0'.repeat(64) } })).stderr)
+        .toMatch(/sourceProofSha256/);
+      expect(bind(inspection({
+        proofOverrides: { canonicalSourceHashes: { ...hashes, crouch: { processedSha256: '7'.repeat(64), rawSha256: '8'.repeat(64) } } },
+      })).stderr).toMatch(/sourceProof\b/);
+      expect(bind(inspection({ descriptorOverrides: { reviewedManifestRunId: '12' } })).stderr).toMatch(/manifestBinding/);
+    });
   });
 });

@@ -72,4 +72,24 @@ describe('extra Video move generation', () => {
     expect((await startAdminArcadeVideoExtraGeneration(request({}), env, ADMIN, 'nope', 'fireball')).status).toBe(400);
     expect((await startAdminArcadeVideoExtraGeneration(request({}), env, ADMIN, FIGHTER, 'fireball')).status).toBe(428);
   });
+
+  it('pins the sealed Trump roster import byte-for-byte to its importer contract', async () => {
+    const { SEALED_VIDEO_ROSTER_IMPORTS, sealedVideoRosterImportFor } = await import('./sealedVideoRosterImports');
+    const contractPath = new URL('../../scripts/trump-video-roster-production-contract.mjs', import.meta.url).href;
+    const { TRUMP_VIDEO_ROSTER_CONTRACT: contract } = await import(/* @vite-ignore */ contractPath);
+    const sealed = sealedVideoRosterImportFor(contract.fighter.id);
+    expect(SEALED_VIDEO_ROSTER_IMPORTS).toHaveLength(1);
+    expect(sealed).toMatchObject({ bundleId: contract.bundleId, slug: contract.fighter.slug });
+    const source = (kind: string) => contract.sources.find((entry: { kind: string }) => entry.kind === kind).sha256;
+    expect(sealed!.sourceHashes).toEqual(Object.fromEntries(['side', 'upright', 'crouch'].map((name) => [name, {
+      processedSha256: source(name), rawSha256: source(`${name}_raw`),
+    }])));
+    expect(sealed!.sprites).toEqual(Object.fromEntries(contract.sprites.map(
+      (sprite: { animationName: string; sha256: string; rawSha256: string }) => [sprite.animationName, {
+        processedSha256: sprite.sha256, rawSha256: sprite.rawSha256,
+      }],
+    )));
+    expect(Object.keys(sealed!.sprites).sort()).toEqual([...VIDEO_SPRITE_ACTIONS].sort());
+    expect(sealedVideoRosterImportFor(FIGHTER)).toBeNull();
+  });
 });
