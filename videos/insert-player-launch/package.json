@@ -10,5 +10,8 @@
   },
   "devDependencies": {
     "@hyperframes/core": "^0.8.20"
+  },
+  "overrides": {
+    "source-map-js": "1.2.2"
   }
 }
