@@ -338,7 +338,7 @@ export function normalizeProductionWorkerUrl(value) {
   return INSERT_PLAYER_PRODUCTION_WORKER_ORIGIN;
 }
 
-function parsePrivateSourceUrl(urlValue, fighterId, kind) {
+export function parsePrivateSourceUrl(urlValue, fighterId, kind) {
   const url = new URL(requireString(urlValue, `${kind} private source URL`));
   if (
     url.origin !== INSERT_PLAYER_PRODUCTION_WORKER_ORIGIN
@@ -364,7 +364,7 @@ function parsePrivateSourceUrl(urlValue, fighterId, kind) {
   return { path: url.pathname, blobKey, ownerUserId: match[1], versionId: match[2] };
 }
 
-async function readBoundedPngResponse(response, label) {
+export async function readBoundedPngResponse(response, label) {
   if (!(response instanceof Response)) throw new Error(`${label} asset client returned no Response.`);
   if (response.status >= 300 && response.status < 400) throw new Error(`${label} asset redirect is forbidden.`);
   if (!response.ok) throw new Error(`${label} asset GET failed with HTTP ${response.status}.`);
