@@ -19,7 +19,16 @@ import {
   stageApprovedVideoSpriteRecuration,
 } from './videoSpriteReview';
 import { activateReviewedVideoArcadeFighter } from './reviewedArcadeActivation';
-import { activateAdminArcadeVideoExtra, hasCompleteReviewedVideoSet, rollbackAdminArcadeVideoExtra } from './arcadeVideoExtras';
+import {
+  activateAdminArcadeVideoExtra,
+  getAdminArcadeVideoExtraSourceProof,
+  hasCompleteReviewedVideoSet,
+  rollbackAdminArcadeVideoExtra,
+  startAdminArcadeVideoExtraGeneration,
+} from './arcadeVideoExtras';
+import { CURRENT_LEGAL_VERSION } from './legal';
+import type { ReviewedCanonicalSourceHashes } from './reviewedCanonicalSources';
+import { proveVideoExtraSources, VideoExtraSourceProofError } from './videoExtraSourceProof';
 import type { AuthContext, Env } from './types';
 
 const USER_ID = 'video-review-user';
@@ -95,6 +104,7 @@ const SCHEMA = `
     review_status TEXT NOT NULL, stage TEXT NOT NULL, failure_stage TEXT,
     error_code TEXT, error_message TEXT,
     progress_current INTEGER NOT NULL, progress_total INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE generation_artifact_checkpoints (
@@ -138,6 +148,17 @@ const SCHEMA = `
     PRIMARY KEY(candidate_id, revision)
   );
   CREATE TABLE provider_cost_events (job_id TEXT, artifact_run_id TEXT, job_outcome TEXT);
+  CREATE TABLE imported_global_video_recuration_transitions (
+    id TEXT PRIMARY KEY, proposal_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
+    action TEXT NOT NULL, operation TEXT NOT NULL, from_sprite_version_id TEXT NOT NULL,
+    to_sprite_version_id TEXT NOT NULL, rollback_of_transition_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE video_extra_source_proofs (
+    job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, fighter_id TEXT NOT NULL,
+    owner_user_id TEXT NOT NULL, action TEXT NOT NULL, proof_json TEXT NOT NULL,
+    proof_sha256 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
   CREATE TABLE generation_job_events (
     id TEXT PRIMARY KEY, job_id TEXT NOT NULL, stage TEXT NOT NULL, status TEXT NOT NULL,
     detail TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -1716,6 +1737,36 @@ describe('video sprite review handlers', () => {
   }, 30_000);
 });
 
+async function sealedRunHashes(harness: Harness): Promise<Record<string, { processedSha256: string; rawSha256: string }>> {
+  const run = await harness.db.prepare('SELECT source_manifest_json FROM generation_artifact_runs WHERE id = ?')
+    .bind(RUN_ID).first<{ source_manifest_json: string }>();
+  const sources = JSON.parse(run!.source_manifest_json).reviewedCanonicalSources.sources as Record<
+    string, { processed: { contentSha256: string }; raw: { contentSha256: string } }
+  >;
+  return Object.fromEntries(['side', 'upright', 'crouch'].map((name) => [name, {
+    processedSha256: sources[name].processed.contentSha256,
+    rawSha256: sources[name].raw.contentSha256,
+  }]));
+}
+
+async function recordExtraSourceProof(
+  harness: Harness,
+  review: ReviewSeed,
+  hashes?: Record<string, { processedSha256: string; rawSha256: string }>,
+): Promise<string> {
+  const proofJson = canonicalJson({
+    schemaVersion: 1, kind: 'approved-video-sources-v1', fighterId: FIGHTER_ID, ownerUserId: USER_ID,
+    canonicalSourceMode: 'reviewed-current-v1',
+    canonicalSourceHashes: hashes ?? await sealedRunHashes(harness),
+  });
+  const proofSha256 = await hashString(proofJson);
+  await harness.db.prepare(`INSERT INTO video_extra_source_proofs (
+    job_id, run_id, fighter_id, owner_user_id, action, proof_json, proof_sha256
+  ) VALUES (?, ?, ?, ?, ?, ?, ?)`).bind(
+    review.jobId, RUN_ID, FIGHTER_ID, USER_ID, review.action, proofJson, proofSha256,
+  ).run();
+  return proofSha256;
+}
 
 describe('review-gated extra Video moves for an active reviewed Champion', () => {
   async function liveChampionWithFireballReview(): Promise<{ harness: Harness; review: ReviewSeed }> {
@@ -1775,6 +1826,12 @@ describe('review-gated extra Video moves for an active reviewed Champion', () =>
 
       const nonAdmin = await activateAdminArcadeVideoExtra(publication(review), harness.env, NON_ADMIN_AUTH, FIGHTER_ID);
       expect(nonAdmin.status).toBe(403);
+      // Publication requires the approved-source proof recorded when the job started.
+      const unproven = await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
+      expect(unproven.status).toBe(409);
+      expect(await unproven.json()).toMatchObject({ code: 'video_extra_source_proof_missing' });
+      expect(await liveFireball(harness)).toBeNull();
+      await recordExtraSourceProof(harness, review);
       const activated = await activateAdminArcadeVideoExtra(publication(review), harness.env, ADMIN_AUTH, FIGHTER_ID);
       expect(activated.status).toBe(200);
       expect(await activated.json()).toMatchObject({ animation: 'fireball', jobId: review.jobId, published: true });
@@ -1846,6 +1903,285 @@ describe('extra Video move start gate', () => {
       await legacy.mf.dispose();
       await unknown.mf.dispose();
       await incomplete.mf.dispose();
+    }
+  });
+});
+
+describe('approved-source proof for extra Video moves', () => {
+  const LEGAL = {
+    legalVersion: CURRENT_LEGAL_VERSION,
+    ageConfirmed: true,
+    termsAccepted: true,
+    photoRightsConfirmed: true,
+    aiProcessingConfirmed: true,
+    immediatePerformanceConfirmed: true,
+    withdrawalLossAcknowledged: true,
+  };
+
+  /** An active Champion whose 11 live sprites are the approved candidates of one reviewed run. */
+  async function approvedLiveChampion(): Promise<{ harness: Harness; reviews: ReviewSeed[] }> {
+    const harness = await createHarness();
+    const reviews = await seedReviews(harness, VIDEO_SPRITE_ACTIONS.length);
+    await harness.db.batch([
+      harness.db.prepare(`UPDATE fighters SET quality_tier = 'champion', public_flag = 1 WHERE id = ?`).bind(FIGHTER_ID),
+      harness.db.prepare(`UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?`).bind(FIGHTER_ID),
+      harness.db.prepare(`UPDATE generation_artifact_runs SET status = 'succeeded' WHERE id = ?`).bind(RUN_ID),
+      harness.db.prepare(`INSERT INTO sprites (
+        id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, frame_w, frame_h,
+        frame_count, processing_version, content_hash, raw_content_hash, animation_format
+      )
+      SELECT 'live-' || animation_name, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+        frame_w, frame_h, frame_count, processing_version, content_hash, raw_content_hash, animation_format
+      FROM sprite_versions WHERE fighter_id = ?`).bind(FIGHTER_ID),
+    ]);
+    return { harness, reviews };
+  }
+
+  async function proofFailure(harness: Harness): Promise<VideoExtraSourceProofError> {
+    try {
+      await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID);
+    } catch (error) {
+      if (error instanceof VideoExtraSourceProofError) return error;
+      throw error;
+    }
+    throw new Error('expected the approved-source proof to fail');
+  }
+
+  const start = (body: Record<string, unknown>) => new Request('https://api.insertplayer.ai/extra', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+
+  it('derives the canonical manifest from the approved run and proves the six live PNGs byte-for-byte', async () => {
+    const { harness, reviews } = await approvedLiveChampion();
+    try {
+      const proven = await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID);
+      expect(proven.proof.canonicalSourceHashes).toEqual(await sealedRunHashes(harness));
+      expect(proven.proof.origins).toEqual([expect.objectContaining({
+        kind: 'reviewed-video-run', runId: RUN_ID, recordedBy: 'sealed-manifest', runStatus: 'succeeded',
+      })]);
+      expect(proven.proof.lineage.map((entry) => [entry.action, entry.origin, entry.jobId])).toEqual(
+        reviews.map((review) => [review.action, RUN_ID, review.jobId]),
+      );
+      expect(proven.proofSha256).toBe(await hashString(canonicalJson(proven.proof)));
+      // Deterministic: the read-only endpoint returns the same proof a start would record.
+      const response = await getAdminArcadeVideoExtraSourceProof(
+        new Request('https://api.insertplayer.ai/proof'), harness.env, ADMIN_AUTH, FIGHTER_ID,
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        proofSha256: proven.proofSha256,
+        canonicalSourceMode: 'reviewed-current-v1',
+        canonicalSourceHashes: proven.proof.canonicalSourceHashes,
+      });
+      const denied = await getAdminArcadeVideoExtraSourceProof(
+        new Request('https://api.insertplayer.ai/proof'), harness.env, NON_ADMIN_AUTH, FIGHTER_ID,
+      );
+      expect(denied.status).toBe(403);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('follows provider-free recurations back to the approved run and accepts checkpoint-only runs', async () => {
+    const { harness } = await approvedLiveChampion();
+    try {
+      const walk = await harness.db.prepare(`SELECT id FROM sprite_versions WHERE animation_name = 'walk'`)
+        .first<{ id: string }>();
+      await harness.db.batch([
+        harness.db.prepare(`INSERT INTO sprite_versions (
+          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, frame_w, frame_h,
+          frame_count, processing_version, content_hash, raw_content_hash, animation_format
+        ) VALUES ('walk-recurated', ?, 'walk', 'champion', 'recurated/walk', 'recurated/walk-raw',
+          192, 256, 8, 6, ?, ?, 'video-dense-v1')`).bind(FIGHTER_ID, 'c'.repeat(64), 'd'.repeat(64)),
+        harness.db.prepare(`INSERT INTO imported_global_video_recuration_transitions (
+          id, proposal_id, fighter_id, action, operation, from_sprite_version_id, to_sprite_version_id
+        ) VALUES ('t1', 'proposal-walk', ?, 'walk', 'promote', ?, 'walk-recurated')`).bind(FIGHTER_ID, walk!.id),
+        harness.db.prepare(`UPDATE sprites SET blob_key = 'recurated/walk', raw_blob_key = 'recurated/walk-raw',
+          content_hash = ?, raw_content_hash = ?, processing_version = 6
+          WHERE fighter_id = ? AND animation_name = 'walk'`).bind('c'.repeat(64), 'd'.repeat(64), FIGHTER_ID),
+      ]);
+      const proven = await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID);
+      expect(proven.proof.lineage.find((entry) => entry.action === 'walk')).toMatchObject({
+        spriteVersionId: 'walk-recurated', originSpriteVersionId: walk!.id,
+        origin: RUN_ID, processingVersion: 6, recurationProposalIds: ['proposal-walk'],
+      });
+
+      // A run that predates the sealed manifest still records its sources in checkpoints.
+      await harness.db.prepare(`UPDATE generation_artifact_runs
+        SET source_manifest_json = json_remove(source_manifest_json, '$.reviewedCanonicalSources')
+        WHERE id = ?`).bind(RUN_ID).run();
+      const fromCheckpoints = await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID);
+      expect(fromCheckpoints.proof.origins[0]).toMatchObject({ recordedBy: 'source-checkpoints' });
+      expect(fromCheckpoints.proof.canonicalSourceHashes).toEqual(proven.proof.canonicalSourceHashes);
+      expect(fromCheckpoints.proofSha256).not.toBe(proven.proofSha256);
+
+      await harness.db.prepare(`DELETE FROM generation_artifact_checkpoints
+        WHERE run_id = ? AND artifact_kind = 'source' AND artifact_name = 'crouch'`).bind(RUN_ID).run();
+      expect((await proofFailure(harness)).message).toMatch(/does not record its crouch canonical source hashes/);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('fails closed when a live sprite has no approved lineage', async () => {
+    const { harness } = await approvedLiveChampion();
+    try {
+      await harness.db.batch([
+        harness.db.prepare(`INSERT INTO sprite_versions (
+          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, frame_w, frame_h,
+          frame_count, processing_version, content_hash, raw_content_hash, animation_format
+        ) VALUES ('hit-uploaded', ?, 'hit', 'champion', 'uploaded/hit', 'uploaded/hit-raw',
+          192, 256, 8, 5, ?, ?, 'video-dense-v1')`).bind(FIGHTER_ID, 'e'.repeat(64), 'f'.repeat(64)),
+        harness.db.prepare(`UPDATE sprites SET blob_key = 'uploaded/hit', raw_blob_key = 'uploaded/hit-raw',
+          content_hash = ?, raw_content_hash = ? WHERE fighter_id = ? AND animation_name = 'hit'`)
+          .bind('e'.repeat(64), 'f'.repeat(64), FIGHTER_ID),
+      ]);
+      const failure = await proofFailure(harness);
+      expect(failure.message).toMatch(/live hit sprite does not trace back/);
+      expect(failure.detail).toMatchObject({ action: 'hit', spriteVersionIds: ['hit-uploaded'] });
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('fails closed before any charge or job when the live sources are not the approved ones', async () => {
+    const { harness } = await approvedLiveChampion();
+    try {
+      const approvedSha = (await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID)).proofSha256;
+      const jobCount = () => harness.db.prepare('SELECT COUNT(*) AS n FROM generation_jobs').first('n');
+      const before = await jobCount();
+
+      const stale = await startAdminArcadeVideoExtraGeneration(
+        start({ legal: LEGAL, expectedSourceProofSha256: '0'.repeat(64) }),
+        harness.env, ADMIN_AUTH, FIGHTER_ID, 'fireball',
+      );
+      expect(stale.status).toBe(409);
+      expect(await stale.json()).toMatchObject({ code: 'video_extra_source_proof_changed', proofSha256: approvedSha });
+
+      const wrongHashes = await startAdminArcadeVideoExtraGeneration(start({
+        legal: LEGAL,
+        canonicalSourceMode: 'reviewed-current-v1',
+        canonicalSourceHashes: {
+          ...await sealedRunHashes(harness),
+          crouch: { processedSha256: 'a'.repeat(64), rawSha256: 'b'.repeat(64) },
+        },
+      }), harness.env, ADMIN_AUTH, FIGHTER_ID, 'fireball');
+      expect(wrongHashes.status).toBe(409);
+      expect(await wrongHashes.json()).toMatchObject({ code: 'video_extra_source_proof_failed' });
+
+      // The live side source is replaced by different bytes.
+      const replaced = new TextEncoder().encode('replaced side').buffer as ArrayBuffer;
+      const replacedHash = await hashString(replaced);
+      await put(harness.bucket, 'source/side-replaced', replaced, replacedHash);
+      await harness.db.batch([
+        harness.db.prepare(`INSERT INTO source_versions (id, fighter_id, kind, blob_key, content_hash)
+          VALUES (?, ?, 'side', 'source/side-replaced', ?)`).bind('9'.repeat(32), FIGHTER_ID, replacedHash),
+        harness.db.prepare(`UPDATE fighters SET side_view_blob_key = 'source/side-replaced' WHERE id = ?`)
+          .bind(FIGHTER_ID),
+      ]);
+      const failure = await proofFailure(harness);
+      expect(failure.message).toBe('The live canonical sources are not the approved Video sources');
+      expect(failure.detail).toMatchObject({
+        mismatches: [{ source: 'side', liveSha256: replacedHash }], origins: [RUN_ID],
+      });
+      const refused = await startAdminArcadeVideoExtraGeneration(
+        start({ legal: LEGAL }), harness.env, ADMIN_AUTH, FIGHTER_ID, 'fireball',
+      );
+      expect(refused.status).toBe(409);
+      expect(await refused.json()).toMatchObject({
+        code: 'video_extra_source_proof_failed',
+        detail: { mismatches: [expect.objectContaining({ source: 'side' })] },
+      });
+      expect(await jobCount()).toBe(before);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('proves a sealed roster import that predates review lineage against its pinned hashes', async () => {
+    const harness = await createHarness();
+    try {
+      // Sprites uploaded straight from a sealed bundle: no candidate is approved.
+      await seedReviews(harness, VIDEO_SPRITE_ACTIONS.length);
+      await harness.db.batch([
+        harness.db.prepare(`UPDATE video_sprite_candidates SET status = 'rejected', approved_revision = NULL`),
+        harness.db.prepare(`UPDATE fighters SET quality_tier = 'champion', public_flag = 1 WHERE id = ?`).bind(FIGHTER_ID),
+        harness.db.prepare(`UPDATE arcade_fighters SET status = 'active' WHERE fighter_id = ?`).bind(FIGHTER_ID),
+        harness.db.prepare(`INSERT INTO sprites (
+          id, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key, frame_w, frame_h,
+          frame_count, processing_version, content_hash, raw_content_hash, animation_format
+        )
+        SELECT 'live-' || animation_name, fighter_id, animation_name, quality_tier, blob_key, raw_blob_key,
+          frame_w, frame_h, frame_count, processing_version, content_hash, raw_content_hash, animation_format
+        FROM sprite_versions WHERE fighter_id = ?`).bind(FIGHTER_ID),
+      ]);
+      const { results } = await harness.db.prepare(`
+        SELECT animation_name, content_hash, raw_content_hash FROM sprite_versions WHERE fighter_id = ?
+      `).bind(FIGHTER_ID).all<{ animation_name: string; content_hash: string; raw_content_hash: string }>();
+      const sealedImport = {
+        bundleId: 'test-bundle-v1', fighterId: FIGHTER_ID, slug: 'test',
+        sourceHashes: await sealedRunHashes(harness) as unknown as ReviewedCanonicalSourceHashes,
+        sprites: Object.fromEntries((results ?? []).map((row) => [row.animation_name, {
+          processedSha256: row.content_hash, rawSha256: row.raw_content_hash,
+        }])),
+      };
+      expect((await proofFailure(harness)).message).toMatch(/does not trace back/);
+      const proven = await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, sealedImport);
+      expect(proven.proof.origins).toEqual([{
+        kind: 'sealed-roster-import', bundleId: 'test-bundle-v1', sourceHashes: await sealedRunHashes(harness),
+      }]);
+      expect(proven.proof.lineage.every((entry) => entry.origin === 'test-bundle-v1' && entry.jobId === null)).toBe(true);
+      // A bundle pinned to other source bytes can never prove the live sources.
+      const otherSources = {
+        ...sealedImport,
+        sourceHashes: { ...sealedImport.sourceHashes, upright: { processedSha256: 'a'.repeat(64), rawSha256: 'b'.repeat(64) } },
+      };
+      await expect(proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, otherSources))
+        .rejects.toThrow('The live canonical sources are not the approved Video sources');
+      // A bundle for another fighter is ignored.
+      await expect(proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, { ...sealedImport, fighterId: 'e'.repeat(32) }))
+        .rejects.toThrow(/does not trace back/);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('re-hashes the live R2 bytes instead of trusting D1 hashes', async () => {
+    const { harness } = await approvedLiveChampion();
+    try {
+      const crouch = await harness.db.prepare(`SELECT content_hash FROM source_versions WHERE kind = 'crouch'`)
+        .first<{ content_hash: string }>();
+      await put(
+        harness.bucket, 'source/crouch', new TextEncoder().encode('tampered').buffer as ArrayBuffer,
+        crouch!.content_hash,
+      );
+      expect((await proofFailure(harness)).message)
+        .toMatch(/crouch processed source bytes do not match the reviewed SHA-256/);
+    } finally {
+      await harness.mf.dispose();
+    }
+  });
+
+  it('serves the proof recorded at a job start only while it is intact', async () => {
+    const { harness, reviews } = await approvedLiveChampion();
+    try {
+      const recordedSha = await recordExtraSourceProof(harness, reviews[0]);
+      const read = (jobId: string) => getAdminArcadeVideoExtraSourceProof(
+        new Request(`https://api.insertplayer.ai/proof?jobId=${jobId}`), harness.env, ADMIN_AUTH, FIGHTER_ID,
+      );
+      const recorded = await read(reviews[0].jobId);
+      expect(recorded.status).toBe(200);
+      expect(await recorded.json()).toMatchObject({
+        jobId: reviews[0].jobId, artifactRunId: RUN_ID, proofSha256: recordedSha,
+        canonicalSourceHashes: await sealedRunHashes(harness),
+      });
+      expect((await read(reviews[1].jobId)).status).toBe(404);
+      expect((await read('nope')).status).toBe(400);
+      await harness.db.prepare(`UPDATE video_extra_source_proofs SET proof_json = '{}' WHERE job_id = ?`)
+        .bind(reviews[0].jobId).run();
+      expect((await read(reviews[0].jobId)).status).toBe(404);
+    } finally {
+      await harness.mf.dispose();
     }
   });
 });

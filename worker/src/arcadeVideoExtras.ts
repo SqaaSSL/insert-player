@@ -1,15 +1,23 @@
-import { generateId } from './auth';
+import { generateId, hashString } from './auth';
 import { createAdminGenerationAuthorization, generationJobRequest } from './arcadeGeneration';
 import { createGenerationJob } from './generationJobs';
 import { CURRENT_LEGAL_VERSION, parseGenerationLegalAttestation } from './legal';
 import { readJsonBody } from './requestBody';
 import {
   parseReviewedCanonicalSourceRequest,
+  parseSealedReviewedCanonicalSources,
   ReviewedCanonicalSourceError,
-  validateReviewedCanonicalSourcesCurrent,
+  reviewedCanonicalHashesFromSealed,
 } from './reviewedCanonicalSources';
 import { requireReviewedProductionWorkerPin } from './reviewedDeploymentPin';
 import type { AuthContext, Env } from './types';
+import { canonicalJson } from './videoSpriteGeneration';
+import {
+  proveVideoExtraSources,
+  VideoExtraSourceProofError,
+  videoExtraSourceProofResponse,
+  type ProvenVideoExtraSources,
+} from './videoExtraSourceProof';
 import {
   VIDEO_SPRITE_ACTIONS,
   VIDEO_SPRITE_ANIMATION_FORMAT,
@@ -25,8 +33,11 @@ import { STUDIO_CURATED_VIDEO_POLICY } from '../../src/services/VideoGenerationP
  * Review-gated extra special moves (fireball, uppercut) for an existing
  * official Champion whose 11 actions already come from a reviewed Video run.
  *
- *   start    -> one fighter_retry_animation Video job from the fighter's sealed
- *               canonical sources; its single candidate waits at awaiting_review
+ *   proof    -> read-only: the six live canonical source PNGs must be the exact
+ *               SHA-256 bytes the approved Video set was generated from
+ *   start    -> re-derives that proof, records it durably, then one
+ *               fighter_retry_animation Video job from those sources; its single
+ *               candidate waits at awaiting_review
  *   review   -> the existing inspect / approve / adjust / reject endpoints
  *               (approval does NOT publish an extra move)
  *   activate -> publishes ONLY the approved sprite version for that one move
@@ -101,10 +112,12 @@ export async function startAdminArcadeVideoExtraGeneration(
   }
   const pinFailure = requireReviewedProductionWorkerPin(request, env);
   if (pinFailure) return pinFailure;
-  const body = await readJsonBody<{ legal?: unknown; canonicalSourceMode?: unknown; canonicalSourceHashes?: unknown }>(
-    request,
-    MAX_BODY_BYTES,
-  );
+  const body = await readJsonBody<{
+    legal?: unknown;
+    canonicalSourceMode?: unknown;
+    canonicalSourceHashes?: unknown;
+    expectedSourceProofSha256?: unknown;
+  }>(request, MAX_BODY_BYTES);
   const legal = parseGenerationLegalAttestation(body.legal);
   if (!legal) {
     return json({ error: 'Current generation consent is required', legalVersion: CURRENT_LEGAL_VERSION }, 428);
@@ -116,8 +129,12 @@ export async function startAdminArcadeVideoExtraGeneration(
     if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
     throw error;
   }
-  if (!reviewedRequest) {
-    return json({ error: 'An extra Video move requires the reviewed canonical source hashes' }, 400);
+  const expectedProofSha256 = body.expectedSourceProofSha256;
+  if (
+    expectedProofSha256 !== undefined &&
+    (typeof expectedProofSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(expectedProofSha256))
+  ) {
+    return json({ error: 'expectedSourceProofSha256 must be a lowercase SHA-256' }, 400);
   }
 
   const fighter = await loadOfficialChampion(env, auth, fighterId);
@@ -145,12 +162,30 @@ export async function startAdminArcadeVideoExtraGeneration(
   `).bind(fighterId).first<{ id: string }>();
   if (active) return json({ error: 'Another generation job is already active for this fighter', jobId: active.id }, 409);
 
-  let reviewedCanonicalSources;
+  // Fail closed before any charge, job or provider call: the live sources must be
+  // byte-identical to the approved Video sources recorded in production.
+  let proven: ProvenVideoExtraSources;
   try {
-    reviewedCanonicalSources = await validateReviewedCanonicalSourcesCurrent(env, fighterId, auth.userId, reviewedRequest);
+    proven = await proveVideoExtraSources(env, fighterId, auth.userId);
   } catch (error) {
-    if (error instanceof ReviewedCanonicalSourceError) return json({ error: error.message }, error.status);
+    if (error instanceof VideoExtraSourceProofError) return sourceProofFailure(error);
     throw error;
+  }
+  if (
+    reviewedRequest &&
+    canonicalJson(reviewedRequest) !== canonicalJson(proven.proof.canonicalSourceHashes)
+  ) {
+    return json({
+      error: 'The supplied canonical source hashes are not the approved Video sources',
+      code: 'video_extra_source_proof_failed',
+    }, 409);
+  }
+  if (expectedProofSha256 !== undefined && expectedProofSha256 !== proven.proofSha256) {
+    return json({
+      error: 'The approved-source proof changed since it was inspected',
+      code: 'video_extra_source_proof_changed',
+      proofSha256: proven.proofSha256,
+    }, 409);
   }
 
   // A job that failed before producing a candidate continues its own run.
@@ -178,7 +213,7 @@ export async function startAdminArcadeVideoExtraGeneration(
     providerLimits: { ...EXTRA_MOVE_PROVIDER_LIMITS },
     continuation: partial ? { runId: partial.run_id, fromJobId: partial.job_id } : undefined,
   });
-  return createGenerationJob(generationJobRequest(
+  const response = await createGenerationJob(generationJobRequest(
     request,
     fighterId,
     authorization.purchaseId,
@@ -186,9 +221,110 @@ export async function startAdminArcadeVideoExtraGeneration(
     { kind: 'animation', name: animationName },
     'video',
   ), env, auth, {
-    reviewedCanonicalSources,
+    reviewedCanonicalSources: proven.reviewedCanonicalSources,
     videoGenerationPolicy: STUDIO_CURATED_VIDEO_POLICY,
+    beforeWorkflowStart: (jobId, runId) => recordVideoExtraSourceProof(
+      env, jobId, runId, auth.userId, animationName, proven,
+    ),
   });
+  if (!response.ok) return response;
+  const created = await response.json<{ job?: { id?: unknown } }>();
+  return json({
+    ...created,
+    sourceProof: { proofSha256: proven.proofSha256, kind: proven.proof.kind },
+  }, response.status);
+}
+
+function sourceProofFailure(error: VideoExtraSourceProofError): Response {
+  return json({
+    error: error.message,
+    code: 'video_extra_source_proof_failed',
+    detail: error.detail,
+  }, error.status);
+}
+
+async function recordVideoExtraSourceProof(
+  env: Env,
+  jobId: string,
+  runId: string,
+  ownerUserId: string,
+  action: VideoSpriteExtraAction,
+  proven: ProvenVideoExtraSources,
+): Promise<void> {
+  await env.DB.prepare(`
+    INSERT INTO video_extra_source_proofs (
+      job_id, run_id, fighter_id, owner_user_id, action, proof_json, proof_sha256
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    jobId, runId, proven.proof.fighterId, ownerUserId, action,
+    canonicalJson(proven.proof), proven.proofSha256,
+  ).run();
+}
+
+interface StoredSourceProofRow {
+  job_id: string;
+  run_id: string;
+  action: string;
+  proof_json: string;
+  proof_sha256: string;
+  created_at: string;
+}
+
+async function storedVideoExtraSourceProof(
+  env: Env,
+  ownerUserId: string,
+  fighterId: string,
+  jobId: string,
+): Promise<StoredSourceProofRow | null> {
+  const row = await env.DB.prepare(`
+    SELECT proof.job_id, proof.run_id, proof.action, proof.proof_json, proof.proof_sha256, proof.created_at
+    FROM video_extra_source_proofs proof
+    JOIN generation_jobs job ON job.id = proof.job_id AND job.artifact_run_id = proof.run_id
+    WHERE proof.job_id = ? AND proof.owner_user_id = ? AND proof.fighter_id = ?
+      AND job.user_id = ? AND job.fighter_id = ?
+    LIMIT 1
+  `).bind(jobId, ownerUserId, fighterId, ownerUserId, fighterId).first<StoredSourceProofRow>();
+  if (!row || await hashString(row.proof_json) !== row.proof_sha256) return null;
+  return row;
+}
+
+/**
+ * GET /api/admin/arcade/:id/video-extra/source-proof           -> live proof (read-only)
+ * GET /api/admin/arcade/:id/video-extra/source-proof?jobId=... -> the proof recorded at that job's start
+ */
+export async function getAdminArcadeVideoExtraSourceProof(
+  request: Request,
+  env: Env,
+  auth: AuthContext,
+  fighterId: string,
+): Promise<Response> {
+  if (auth.user.plan_tier !== 'admin') return json({ error: 'Admin access required' }, 403);
+  if (!/^[a-f0-9]{32}$/.test(fighterId)) return json({ error: 'A valid fighterId is required' }, 400);
+  const fighter = await loadOfficialChampion(env, auth, fighterId);
+  if (!fighter) return json({ error: 'Official Arcade fighter not found' }, 404);
+  const jobId = new URL(request.url).searchParams.get('jobId');
+  if (jobId !== null) {
+    if (!/^[a-f0-9]{32}$/.test(jobId)) return json({ error: 'A valid jobId is required' }, 400);
+    const stored = await storedVideoExtraSourceProof(env, auth.userId, fighterId, jobId);
+    if (!stored) return json({ error: 'No intact approved-source proof is recorded for this job' }, 404);
+    const proof = JSON.parse(stored.proof_json) as ProvenVideoExtraSources['proof'];
+    return json({
+      jobId: stored.job_id,
+      artifactRunId: stored.run_id,
+      action: stored.action,
+      recordedAt: stored.created_at,
+      proof,
+      proofSha256: stored.proof_sha256,
+      canonicalSourceMode: proof.canonicalSourceMode,
+      canonicalSourceHashes: proof.canonicalSourceHashes,
+    });
+  }
+  try {
+    return json(videoExtraSourceProofResponse(await proveVideoExtraSources(env, fighterId, auth.userId)));
+  } catch (error) {
+    if (error instanceof VideoExtraSourceProofError) return sourceProofFailure(error);
+    throw error;
+  }
 }
 
 interface ApprovedExtraRow {
@@ -291,6 +427,30 @@ export async function activateAdminArcadeVideoExtra(
   const loaded = await loadApprovedExtraMove(env, auth.userId, fighterId, jobId);
   if ('error' in loaded) return json({ error: loaded.error }, loaded.status);
   const { row, animation } = loaded;
+  const sourceProof = await storedVideoExtraSourceProof(env, auth.userId, fighterId, jobId);
+  const runSources = await env.DB.prepare(`
+    SELECT run.source_manifest_json
+    FROM generation_jobs job
+    JOIN generation_artifact_runs run ON run.id = job.artifact_run_id
+    WHERE job.id = ? AND job.user_id = ?
+    LIMIT 1
+  `).bind(jobId, auth.userId).first<{ source_manifest_json: string | null }>();
+  let sealedRunSources;
+  try {
+    sealedRunSources = parseSealedReviewedCanonicalSources(runSources?.source_manifest_json ?? null);
+  } catch {
+    sealedRunSources = null;
+  }
+  if (
+    !sourceProof || sourceProof.action !== animation || !sealedRunSources ||
+    canonicalJson((JSON.parse(sourceProof.proof_json) as ProvenVideoExtraSources['proof']).canonicalSourceHashes) !==
+      canonicalJson(reviewedCanonicalHashesFromSealed(sealedRunSources))
+  ) {
+    return json({
+      error: 'This extra move has no intact approved-source proof bound to its run; it cannot be published',
+      code: 'video_extra_source_proof_missing',
+    }, 409);
+  }
   const [clean, raw] = await Promise.all([
     env.SPRITES.head(row.blob_key),
     row.raw_blob_key ? env.SPRITES.head(row.raw_blob_key) : Promise.resolve(null),
@@ -331,7 +491,10 @@ export async function activateAdminArcadeVideoExtra(
   if (!live || live.blob_key !== row.blob_key || live.content_hash !== row.content_hash) {
     return json({ error: 'The extra move could not be published atomically' }, 500);
   }
-  return json({ fighterId, animation, jobId, spriteVersionId: row.version_id, published: true });
+  return json({
+    fighterId, animation, jobId, spriteVersionId: row.version_id,
+    sourceProofSha256: sourceProof.proof_sha256, published: true,
+  });
 }
 
 export async function rollbackAdminArcadeVideoExtra(

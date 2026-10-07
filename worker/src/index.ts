@@ -72,6 +72,7 @@ import {
 import {
   activateAdminArcadeVideoExtra,
   rollbackAdminArcadeVideoExtra,
+  getAdminArcadeVideoExtraSourceProof,
   startAdminArcadeVideoExtraGeneration,
 } from './arcadeVideoExtras';
 import { readDeploymentImageProcessorContract } from './deploymentPreflight';
@@ -888,6 +889,22 @@ export default {
       }
 
       // Review-gated extra special moves for an existing reviewed Champion.
+      const arcadeVideoExtraProofMatch = path.match(/^\/api\/admin\/arcade\/([^/]+)\/video-extra\/source-proof$/);
+      if (arcadeVideoExtraProofMatch && method === 'GET') {
+        const arcadeFighterId = decodePathParam(arcadeVideoExtraProofMatch[1]);
+        if (isResponse(arcadeFighterId)) return addCors(arcadeFighterId, request, env);
+        return addCors(
+          await authenticatedLimited(
+            request,
+            env,
+            'admin:arcade',
+            (auth) => getAdminArcadeVideoExtraSourceProof(request, env, auth, arcadeFighterId),
+          ),
+          request,
+          env,
+        );
+      }
+
       const arcadeVideoExtraMatch = path.match(
         /^\/api\/admin\/arcade\/([^/]+)\/video-extra\/(generate\/([^/]+)|activate|rollback)$/,
       );

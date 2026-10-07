@@ -2045,7 +2045,7 @@ describe('Review-gated Arcade Video step', () => {
     expect(videoReviewWorkflow).toContain('import-reviewed-manual-canonical-production.yml');
     expect(videoReviewWorkflow).toContain('arcade-video-review-$REQUESTED_SLUG-$INSPECTION_RUN_ID');
     expect(videoReviewWorkflow).toContain('review-descriptor.json');
-    expect(videoReviewWorkflow).toContain('reviewedManifestSha256 === manifestSha');
+    expect(videoReviewWorkflow).toContain('descriptor.reviewedManifestSha256 === sha256(manifestBytes)');
     expect(videoReviewWorkflow).toContain("raw: ['raw.png', 'image/png']");
     expect(videoReviewWorkflow).toContain('--video-review-inspect');
     expect(videoReviewWorkflow).toContain('--video-review-decision="$REQUESTED_OPERATION"');

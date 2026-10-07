@@ -43,6 +43,9 @@ const recurationConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confir
 const videoExtraAnimationArg = rawArgs.find((arg) => arg.startsWith('--video-extra-animation='));
 const videoExtraConfirmationArg = rawArgs.find((arg) => arg.startsWith('--confirm-video-extra='));
 const reviewedVideoExtraJobIdArg = rawArgs.find((arg) => arg.startsWith('--reviewed-video-extra-job-id='));
+const expectedVideoExtraSourceProofArg = rawArgs.find(
+  (arg) => arg.startsWith('--expected-video-extra-source-proof-sha256='),
+);
 const target = targetArg?.slice('--target='.length) ?? 'production';
 const animationName = animationArg?.slice('--animation='.length) ?? '';
 const sourceName = sourceArg?.slice('--source='.length) ?? '';
@@ -77,6 +80,8 @@ const recurationConfirmation = recurationConfirmationArg
 const videoExtraAnimation = videoExtraAnimationArg?.slice('--video-extra-animation='.length) ?? '';
 const videoExtraConfirmation = videoExtraConfirmationArg?.slice('--confirm-video-extra='.length) ?? '';
 const reviewedVideoExtraJobId = reviewedVideoExtraJobIdArg?.slice('--reviewed-video-extra-job-id='.length) ?? '';
+const expectedVideoExtraSourceProofSha256 = expectedVideoExtraSourceProofArg
+  ?.slice('--expected-video-extra-source-proof-sha256='.length) ?? '';
 const dryRun = args.has('--dry-run');
 const activate = args.has('--activate');
 const activateDraft = args.has('--activate-draft');
@@ -606,6 +611,151 @@ export function assertReviewedCanonicalManifest(value, expected = {}) {
   return value;
 }
 
+export const VIDEO_EXTRA_SOURCE_PROOF_KIND = 'approved-video-sources-v1';
+
+/** Byte-identical to the Worker's canonicalJson, so a proof SHA-256 is re-derived locally. */
+export function canonicalProofJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalProofJson).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.entries(value)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, child]) => `${JSON.stringify(key)}:${canonicalProofJson(child)}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+function sameCanonicalSourceHashes(left, right) {
+  return CANONICAL_SOURCE_NAMES.every((name) => (
+    left?.[name]?.processedSha256 === right?.[name]?.processedSha256
+    && left?.[name]?.rawSha256 === right?.[name]?.rawSha256
+  ));
+}
+
+/**
+ * The Worker's approved-source proof for an extra move: the live proof before a
+ * start, or the one recorded when `jobId` started. It replaces the expiring
+ * reviewed-manifest artifact: the six canonical hashes are derived from
+ * production's approved Video records and re-proven byte-for-byte by the Worker.
+ * The returned manifest has the exact reviewed-current-v1 shape every existing
+ * job/descriptor binding already checks.
+ */
+export async function loadVideoExtraSourceProof({
+  baseUrl,
+  token,
+  fighter,
+  fighterId,
+  approvedPhotoHash,
+  jobId = '',
+  requestApi = apiRequest,
+}) {
+  if (jobId) exactVideoJobId(jobId, 'Extra-move source proof jobId');
+  const query = jobId ? `?jobId=${encodeURIComponent(jobId)}` : '';
+  const body = await requestApi(
+    baseUrl,
+    token,
+    `/api/admin/arcade/${encodeURIComponent(fighterId)}/video-extra/source-proof${query}`,
+  );
+  const proof = body?.proof;
+  if (
+    !proof || typeof proof !== 'object' || proof.schemaVersion !== 1
+    || proof.kind !== VIDEO_EXTRA_SOURCE_PROOF_KIND || proof.fighterId !== fighterId
+    || proof.canonicalSourceMode !== REVIEWED_CANONICAL_SOURCE_MODE
+    || typeof body.proofSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.proofSha256)
+    || sha256(canonicalProofJson(proof)) !== body.proofSha256
+    || (jobId && body.jobId !== jobId)
+    || !Array.isArray(proof.origins) || proof.origins.length < 1
+    || !Array.isArray(proof.lineage) || proof.lineage.length !== REVIEW_GATED_VIDEO_ACTIONS.length
+  ) {
+    throw new Error(`${fighter.name} approved-source proof is missing or failed its integrity binding.`);
+  }
+  const hashes = proof.canonicalSourceHashes ?? {};
+  const manifest = assertReviewedCanonicalManifest({
+    schemaVersion: 1,
+    canonicalSourceMode: REVIEWED_CANONICAL_SOURCE_MODE,
+    slug: fighter.slug,
+    fighterId,
+    photoHash: approvedPhotoHash,
+    canonicalSourceHashes: Object.fromEntries(CANONICAL_SOURCE_NAMES.map((name) => [name, {
+      processedSha256: hashes[name]?.processedSha256,
+      rawSha256: hashes[name]?.rawSha256,
+    }])),
+  }, { slug: fighter.slug, fighterId, photoHash: approvedPhotoHash });
+  return {
+    manifest,
+    proof,
+    proofSha256: body.proofSha256,
+    jobId: jobId || null,
+    artifactRunId: body.artifactRunId ?? null,
+  };
+}
+
+/** One-line audit of what the proof was derived from. */
+function videoExtraSourceProofSummary(sourceProof) {
+  return {
+    proofSha256: sourceProof.proofSha256,
+    origins: sourceProof.proof.origins.map((origin) => (
+      origin.kind === 'reviewed-video-run'
+        ? { kind: origin.kind, runId: origin.runId, recordedBy: origin.recordedBy }
+        : { kind: origin.kind, bundleId: origin.bundleId }
+    )),
+    canonicalSourceHashes: sourceProof.manifest.canonicalSourceHashes,
+  };
+}
+
+/**
+ * Binds a review operation to its canonical sources. A full-run job needs the
+ * separately reviewed manifest artifact; an extra-move job is bound instead to
+ * the approved-source proof the Worker recorded when it started (an optional
+ * manifest must then agree with it).
+ */
+export async function bindReviewCanonicalSources({
+  baseUrl,
+  token,
+  fighter,
+  fighterId,
+  approvedPhotoHash,
+  jobId,
+  extraMove,
+  reviewedCanonicalManifest,
+  reviewedManifestRunId,
+  reviewedManifestSha256,
+  expectedSourceProofSha256 = '',
+  requestApi,
+  operation,
+}) {
+  if (!extraMove) {
+    if (!reviewedCanonicalManifest) {
+      throw new Error(`Video review ${operation} requires the exact separately reviewed canonical manifest.`);
+    }
+    if (!/^[1-9][0-9]*$/.test(reviewedManifestRunId ?? '') || !/^[a-f0-9]{64}$/.test(reviewedManifestSha256 ?? '')) {
+      throw new Error(`Video review ${operation} requires the exact manifest producer run and file SHA-256.`);
+    }
+    if (expectedSourceProofSha256) {
+      throw new Error('An approved-source proof binding applies only to an extra Video move.');
+    }
+    assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+      slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+    });
+    return { manifest: reviewedCanonicalManifest, sourceProof: null };
+  }
+  const sourceProof = await loadVideoExtraSourceProof({
+    baseUrl, token, fighter, fighterId, approvedPhotoHash, jobId, requestApi,
+  });
+  if (expectedSourceProofSha256 && sourceProof.proofSha256 !== expectedSourceProofSha256) {
+    throw new Error(`Video job ${jobId} approved-source proof differs from the inspected one.`);
+  }
+  if (reviewedCanonicalManifest) {
+    assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+      slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+    });
+    if (!sameCanonicalSourceHashes(reviewedCanonicalManifest.canonicalSourceHashes, sourceProof.manifest.canonicalSourceHashes)) {
+      throw new Error('The supplied canonical manifest disagrees with the recorded approved-source proof.');
+    }
+  }
+  return { manifest: reviewedCanonicalManifest ?? sourceProof.manifest, sourceProof };
+}
+
 function selectFighters(manifest) {
   if (all && slugArg) throw new Error('Use either --all or --slug, not both.');
   if (
@@ -717,6 +867,9 @@ function selectFighters(manifest) {
   }
   if (reviewedCanonicalManifestPath && !videoStep && !videoReview && !videoExtraStep) {
     throw new Error('--reviewed-canonical-manifest is supported only with --video-step, --video-extra-animation or --video-review-decision.');
+  }
+  if (expectedVideoExtraSourceProofSha256 && (!videoReview || !/^[a-f0-9]{64}$/.test(expectedVideoExtraSourceProofSha256))) {
+    throw new Error('--expected-video-extra-source-proof-sha256 takes one lowercase SHA-256 with a Video review operation.');
   }
   if (reviewedVideoFinalJobId && !activateReviewed) {
     throw new Error('--reviewed-video-final-job-id is supported only with --activate-reviewed.');
@@ -1719,6 +1872,7 @@ export async function runReviewGatedVideoDecision({
   reviewedCanonicalManifest,
   reviewedManifestRunId,
   reviewedManifestSha256,
+  expectedSourceProofSha256 = '',
   baseUrl,
   token,
   decision,
@@ -1743,13 +1897,6 @@ export async function runReviewGatedVideoDecision({
   }
   if (typeof reportSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(reportSha256)) {
     throw new Error('Video review reportSha256 must be an exact lowercase SHA-256.');
-  }
-  if (!reviewedCanonicalManifest) {
-    throw new Error('Video review decisions require the exact separately reviewed canonical manifest.');
-  }
-  if (!/^[1-9][0-9]*$/.test(reviewedManifestRunId ?? '') ||
-    !/^[a-f0-9]{64}$/.test(reviewedManifestSha256 ?? '')) {
-    throw new Error('Video review decisions require the exact manifest producer run and file SHA-256.');
   }
   const requestedIndices = decision === 'reject'
     ? null
@@ -1786,12 +1933,12 @@ export async function runReviewGatedVideoDecision({
     owned: detail.fighter,
     approvedPhotoHash,
   });
-  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
-    slug: fighter.slug,
-    fighterId,
-    photoHash: approvedPhotoHash,
+  const bound = await bindReviewCanonicalSources({
+    baseUrl, token, fighter, fighterId, approvedPhotoHash, jobId, extraMove,
+    reviewedCanonicalManifest, reviewedManifestRunId, reviewedManifestSha256,
+    expectedSourceProofSha256, requestApi, operation: 'decisions',
   });
-  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest, { extraMove });
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, bound.manifest, { extraMove });
   if (job.id !== jobId) throw new Error('Video review job identity changed before mutation.');
   const reviewPath = `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`;
   const reviewBody = await requestApi(baseUrl, token, reviewPath);
@@ -1868,9 +2015,10 @@ export async function runReviewGatedVideoDecision({
         job,
         review: updated,
         destination,
-        reviewedCanonicalManifest,
-        reviewedManifestRunId,
-        reviewedManifestSha256,
+        reviewedCanonicalManifest: bound.manifest,
+        reviewedManifestRunId: bound.sourceProof ? '' : reviewedManifestRunId,
+        reviewedManifestSha256: bound.sourceProof ? '' : reviewedManifestSha256,
+        extraMoveSourceProof: bound.sourceProof,
         requestAsset,
       })
     : null;
@@ -1915,12 +2063,6 @@ export async function runReviewGatedVideoInspection({
   if (typeof reportSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(reportSha256)) {
     throw new Error('Video review reportSha256 must be an exact lowercase SHA-256.');
   }
-  if (!reviewedCanonicalManifest || !/^[1-9][0-9]*$/.test(reviewedManifestRunId)) {
-    throw new Error('Video review inspection requires the exact reviewed manifest and producer run id.');
-  }
-  if (!/^[a-f0-9]{64}$/.test(reviewedManifestSha256)) {
-    throw new Error('Video review inspection requires the exact reviewed manifest file SHA-256.');
-  }
   const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
   const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
   if (!entry) throw new Error(`No current Arcade fighter exists for ${fighter.slug}.`);
@@ -1932,10 +2074,12 @@ export async function runReviewGatedVideoInspection({
   const { fighterId } = (extraMove ? assertReviewGatedVideoExtraFighter : assertReviewGatedVideoDraft)({
     manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
   });
-  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
-    slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+  const bound = await bindReviewCanonicalSources({
+    baseUrl, token, fighter, fighterId, approvedPhotoHash, jobId, extraMove,
+    reviewedCanonicalManifest, reviewedManifestRunId, reviewedManifestSha256,
+    requestApi, operation: 'inspection',
   });
-  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, reviewedCanonicalManifest, { extraMove });
+  const job = assertReviewGatedVideoJob(jobBody.job, fighterId, bound.manifest, { extraMove });
   if (job.id !== jobId) throw new Error('Video review job identity changed before inspection.');
   const reviewBody = await requestApi(
     baseUrl, token, `/api/generation-jobs/${encodeURIComponent(jobId)}/video-review`,
@@ -1950,9 +2094,10 @@ export async function runReviewGatedVideoInspection({
     job,
     review,
     destination,
-    reviewedCanonicalManifest,
-    reviewedManifestRunId,
-    reviewedManifestSha256,
+    reviewedCanonicalManifest: bound.manifest,
+    reviewedManifestRunId: bound.sourceProof ? '' : reviewedManifestRunId,
+    reviewedManifestSha256: bound.sourceProof ? '' : reviewedManifestSha256,
+    extraMoveSourceProof: bound.sourceProof,
     requestAsset,
   });
   console.log(`  video-review-inspect: ${JSON.stringify({
@@ -2024,6 +2169,7 @@ async function exportAwaitingVideoReviewArtifact({
   reviewedCanonicalManifest = null,
   reviewedManifestRunId = '',
   reviewedManifestSha256 = '',
+  extraMoveSourceProof = null,
   requestAsset = apiAssetRequest,
 }) {
   const definitions = [
@@ -2075,8 +2221,18 @@ async function exportAwaitingVideoReviewArtifact({
     reviewedCanonicalSourceHashes: reviewedCanonicalManifest?.canonicalSourceHashes ?? null,
     reviewedManifestRunId,
     reviewedManifestSha256,
+    // Extra moves: the canonical sources are bound to the Worker's recorded
+    // approved-source proof (file bytes = canonical JSON, so SHA-256(file) = proof SHA).
+    extraMoveSourceProofSha256: extraMoveSourceProof?.proofSha256 ?? null,
     assets: exportedAssets,
   };
+  if (extraMoveSourceProof) {
+    writeFileSync(
+      join(destination, 'source-proof.json'),
+      canonicalProofJson(extraMoveSourceProof.proof),
+      { mode: 0o600 },
+    );
+  }
   writeFileSync(
     join(destination, 'review-descriptor.json'),
     `${JSON.stringify(descriptor, null, 2)}\n`,
@@ -2948,9 +3104,6 @@ export async function runReviewGatedVideoExtraStep({
   if (!REVIEW_GATED_VIDEO_EXTRA_ACTION_SET.has(animation)) {
     throw new Error(`Unsupported extra Video move: ${animation}`);
   }
-  if (!reviewedCanonicalManifest) {
-    throw new Error('An extra Video move requires the exact separately reviewed canonical manifest.');
-  }
   const admin = await requestApi(baseUrl, token, '/api/admin/arcade');
   const entry = findCurrentArcadeEntry(Array.isArray(admin.fighters) ? admin.fighters : [], fighter.slug);
   const detail = entry
@@ -2959,9 +3112,21 @@ export async function runReviewGatedVideoExtraStep({
   const { fighterId } = assertReviewGatedVideoExtraFighter({
     manifest, fighter, entry, owned: detail.fighter, approvedPhotoHash,
   });
-  assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
-    slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+  // No artifact: the canonical manifest is derived from production and proven by
+  // the Worker (six live PNG SHA-256s = the approved Video run's recorded sources).
+  const liveProof = await loadVideoExtraSourceProof({
+    baseUrl, token, fighter, fighterId, approvedPhotoHash, requestApi,
   });
+  if (reviewedCanonicalManifest) {
+    assertReviewedCanonicalManifest(reviewedCanonicalManifest, {
+      slug: fighter.slug, fighterId, photoHash: approvedPhotoHash,
+    });
+    if (!sameCanonicalSourceHashes(reviewedCanonicalManifest.canonicalSourceHashes, liveProof.manifest.canonicalSourceHashes)) {
+      throw new Error('The supplied canonical manifest is not the approved Video sources; nothing was started.');
+    }
+  }
+  const boundManifest = liveProof.manifest;
+  console.log(`  video-extra-source-proof: ${JSON.stringify(videoExtraSourceProofSummary(liveProof))}`);
   const listed = await requestApi(baseUrl, token, `/api/generation-jobs?fighterId=${encodeURIComponent(fighterId)}`);
   if (!Array.isArray(listed.jobs)) throw new Error('Generation job listing is unavailable; nothing was started.');
   const sameMove = listed.jobs.filter((job) => job?.fighterId === fighterId
@@ -2971,7 +3136,7 @@ export async function runReviewGatedVideoExtraStep({
   let job;
   let mode;
   if (pending) {
-    job = assertReviewGatedVideoJob(pending, fighterId, reviewedCanonicalManifest, { extraMove: animation });
+    job = assertReviewGatedVideoJob(pending, fighterId, boundManifest, { extraMove: animation });
     mode = pending.reviewStatus === 'awaiting_review' ? 'reused-review' : 'resumed-poll';
   } else {
     const started = await requestApi(
@@ -2982,20 +3147,34 @@ export async function runReviewGatedVideoExtraStep({
         method: 'POST',
         body: JSON.stringify({
           legal: generationLegal(manifest),
-          canonicalSourceMode: reviewedCanonicalManifest.canonicalSourceMode,
-          canonicalSourceHashes: reviewedCanonicalManifest.canonicalSourceHashes,
+          canonicalSourceMode: boundManifest.canonicalSourceMode,
+          canonicalSourceHashes: boundManifest.canonicalSourceHashes,
+          expectedSourceProofSha256: liveProof.proofSha256,
         }),
       },
     );
     if (!started.job) throw new Error(`${fighter.name} extra Video endpoint returned no job; nothing else was attempted.`);
-    job = assertReviewGatedVideoJob(started.job, fighterId, reviewedCanonicalManifest, { extraMove: animation });
+    if (started.sourceProof?.proofSha256 !== liveProof.proofSha256) {
+      throw new Error(`${fighter.name} extra Video job was not started from the inspected approved-source proof.`);
+    }
+    job = assertReviewGatedVideoJob(started.job, fighterId, boundManifest, { extraMove: animation });
     mode = 'started';
+  }
+  // The job carries its own durable proof; bind every later step to it.
+  const jobProof = await loadVideoExtraSourceProof({
+    baseUrl, token, fighter, fighterId, approvedPhotoHash, jobId: job.id, requestApi,
+  });
+  if (
+    !sameCanonicalSourceHashes(jobProof.manifest.canonicalSourceHashes, boundManifest.canonicalSourceHashes)
+    || (mode === 'started' && jobProof.proofSha256 !== liveProof.proofSha256)
+  ) {
+    throw new Error(`Video job ${job.id} is not bound to the current approved-source proof.`);
   }
   console.log(`  video-extra-job: ${JSON.stringify({ fighter: fighter.slug, animation, mode, jobId: job.id, artifactRunId: job.artifactRunId })}`);
   if (mode !== 'reused-review') {
     job = await waitForAwaitingVideoReview({
       baseUrl, token, fighter, fighterId, initialJob: job, requestApi, pause, pollIntervalMs, jobTimeoutMs,
-      reviewedCanonicalManifest, extraMove: animation,
+      reviewedCanonicalManifest: boundManifest, extraMove: animation,
     });
   }
   const reviewBody = await requestApi(baseUrl, token, `/api/generation-jobs/${encodeURIComponent(job.id)}/video-review`);
@@ -3006,10 +3185,14 @@ export async function runReviewGatedVideoExtraStep({
   const descriptor = reviewArtifactDir
     ? await exportAwaitingVideoReviewArtifact({
         baseUrl, token, fighter, job, review, destination: reviewArtifactDir,
-        reviewedCanonicalManifest, reviewedManifestRunId, reviewedManifestSha256, requestAsset,
+        reviewedCanonicalManifest: boundManifest,
+        reviewedManifestRunId: '',
+        reviewedManifestSha256: '',
+        extraMoveSourceProof: jobProof,
+        requestAsset,
       })
     : null;
-  return { mode, job, review, descriptor };
+  return { mode, job, review, descriptor, sourceProof: jobProof };
 }
 
 /** Publish (or unpublish) exactly one approved extra move on the live fighter. */
@@ -3823,17 +4006,16 @@ async function main() {
     assertReviewedExtraActivationConfirmation(activateReviewedExtra ? 'activate' : 'rollback', activationConfirmation);
     exactVideoJobId(reviewedVideoExtraJobId, '--reviewed-video-extra-job-id');
   }
-  if (target === 'production' && videoExtraStep && !reviewedCanonicalManifestPath) {
-    throw new Error('Production extra Video moves require --reviewed-canonical-manifest from a separately reviewed run.');
-  }
-  if (target === 'production' && (videoStep || videoReview) && !reviewedCanonicalManifestPath) {
+  // Extra moves derive their canonical manifest from production (approved-source
+  // proof); a review of a full-run job still fails closed without its manifest.
+  if (target === 'production' && videoStep && !reviewedCanonicalManifestPath) {
     throw new Error(
       'Production review-gated Video operations require --reviewed-canonical-manifest from a separately reviewed run.',
     );
   }
   if (
     target === 'production'
-    && (videoStep || videoReview || videoExtraStep)
+    && (videoStep || reviewedCanonicalManifestPath)
     && !/^[1-9][0-9]*$/.test(reviewedManifestRunId)
   ) {
     throw new Error(
@@ -4056,6 +4238,7 @@ async function main() {
       reviewedCanonicalManifest,
       reviewedManifestRunId,
       reviewedManifestSha256,
+      expectedSourceProofSha256: expectedVideoExtraSourceProofSha256,
       baseUrl,
       token,
       decision: videoReviewDecision,

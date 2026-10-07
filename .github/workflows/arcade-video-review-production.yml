@@ -46,8 +46,8 @@ on:
         required: true
         type: string
       reviewed_manifest_run_id:
-        description: Completed approved canonical-import workflow run
-        required: true
+        description: Full-run jobs only. Completed approved canonical-import run; empty for an extra move (bound to its recorded approved-source proof)
+        required: false
         type: string
       inspection_run_id:
         description: Prior successful step, inspect, or adjust artifact run on this exact commit; required for decisions
@@ -101,7 +101,7 @@ jobs:
           [[ "$CANDIDATE_ID" =~ ^[a-f0-9]{32}$ ]] || exit 1
           [[ "$REVISION" =~ ^([1-9]|[1-9][0-9]|100)$ ]] || exit 1
           [[ "$REPORT_SHA256" =~ ^[a-f0-9]{64}$ ]] || exit 1
-          [[ "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ -z "$REVIEWED_MANIFEST_RUN_ID" || "$REVIEWED_MANIFEST_RUN_ID" =~ ^[1-9][0-9]*$ ]] || exit 1
           [[ -n "$ASF_ARCADE_CLERK_SECRET_KEY" && -n "$ASF_ARCADE_ADMIN_CLERK_USER_ID" ]] || exit 1
           case "$REQUESTED_OPERATION" in
             inspect)
@@ -168,6 +168,7 @@ jobs:
         run: npm run arcade:sources -- --target=production --slug="$REQUESTED_SLUG"
 
       - name: Download the approved canonical manifest lineage
+        if: inputs.reviewed_manifest_run_id != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -232,13 +233,52 @@ jobs:
           [[ -f "$descriptor" ]] || exit 1
           INSPECTION_DESCRIPTOR="$descriptor" INSPECTION_DIRECTORY="$destination" node --input-type=module <<'NODE'
           import { createHash } from 'node:crypto';
-          import { existsSync } from 'node:fs';
+          import { appendFileSync, existsSync } from 'node:fs';
           import { readFileSync } from 'node:fs';
           import { join } from 'node:path';
           const descriptor = JSON.parse(readFileSync(process.env.INSPECTION_DESCRIPTOR, 'utf8'));
-          const manifestBytes = readFileSync(process.env.REVIEWED_CANONICAL_MANIFEST);
-          const manifest = JSON.parse(manifestBytes);
-          const manifestSha = createHash('sha256').update(manifestBytes).digest('hex');
+          const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
+          const sources = ['side', 'upright', 'crouch'];
+          const sameHashes = (left, right) => sources.every((name) => (
+            left?.[name]?.processedSha256 === right?.[name]?.processedSha256 &&
+            left?.[name]?.rawSha256 === right?.[name]?.rawSha256
+          ));
+          // A full-run job binds to the downloaded manifest artifact. An extra move
+          // binds to the approved-source proof the Worker recorded at its start,
+          // exported as canonical JSON bytes (SHA-256(file) = proof SHA-256).
+          let manifest;
+          let lineage;
+          if (process.env.REVIEWED_CANONICAL_MANIFEST) {
+            const manifestBytes = readFileSync(process.env.REVIEWED_CANONICAL_MANIFEST);
+            manifest = JSON.parse(manifestBytes);
+            lineage = [
+              descriptor.reviewedManifestRunId === process.env.REVIEWED_MANIFEST_RUN_ID ? null : 'manifestRunId',
+              descriptor.reviewedManifestSha256 === sha256(manifestBytes) ? null : 'manifestSha256',
+            ];
+          } else {
+            const proofPath = join(process.env.INSPECTION_DIRECTORY, 'source-proof.json');
+            const proofBytes = existsSync(proofPath) ? readFileSync(proofPath) : null;
+            const proof = proofBytes ? JSON.parse(proofBytes) : null;
+            manifest = {
+              fighterId: proof?.fighterId,
+              canonicalSourceMode: proof?.canonicalSourceMode,
+              canonicalSourceHashes: descriptor.reviewedCanonicalSourceHashes,
+            };
+            lineage = [
+              ['fireball', 'uppercut'].includes(descriptor.action) ? null : 'extraMoveOnly',
+              descriptor.reviewedManifestRunId === '' && descriptor.reviewedManifestSha256 === ''
+                ? null : 'manifestBinding',
+              /^[a-f0-9]{64}$/.test(descriptor.extraMoveSourceProofSha256 ?? '') && proofBytes &&
+                sha256(proofBytes) === descriptor.extraMoveSourceProofSha256 ? null : 'sourceProofSha256',
+              proof?.kind === 'approved-video-sources-v1' && Array.isArray(proof?.origins) &&
+                proof.origins.length > 0 && sameHashes(proof?.canonicalSourceHashes, descriptor.reviewedCanonicalSourceHashes)
+                ? null : 'sourceProof',
+            ];
+            appendFileSync(
+              process.env.GITHUB_ENV,
+              `EXTRA_SOURCE_PROOF_SHA256=${descriptor.extraMoveSourceProofSha256}\n`,
+            );
+          }
           // The 11-action run, then the review-gated extra moves (sequence 11, 12).
           const actions = [
             'idle', 'walk', 'high_punch', 'high_kick', 'low_punch', 'low_kick',
@@ -272,10 +312,9 @@ jobs:
               descriptor.selectedVideoIndices.every((value) => Number.isSafeInteger(value) && value >= 0) &&
               new Set(descriptor.selectedVideoIndices).size === descriptor.selectedVideoIndices.length
               ? null : 'selectedVideoIndices',
-            descriptor.reviewedManifestRunId === process.env.REVIEWED_MANIFEST_RUN_ID ? null : 'manifestRunId',
-            descriptor.reviewedManifestSha256 === manifestSha ? null : 'manifestSha256',
+            ...lineage,
             descriptor.reviewedCanonicalSourceMode === manifest.canonicalSourceMode ? null : 'sourceMode',
-            JSON.stringify(descriptor.reviewedCanonicalSourceHashes) === JSON.stringify(manifest.canonicalSourceHashes)
+            sameHashes(descriptor.reviewedCanonicalSourceHashes, manifest.canonicalSourceHashes)
               ? null : 'sourceHashes',
           ].filter(Boolean);
           for (const [name, [filename, contentType]] of Object.entries(assetDefinitions)) {
@@ -308,14 +347,22 @@ jobs:
             --slug="$REQUESTED_SLUG"
             --confirm-production
             --confirm-video-step="$REQUESTED_CONFIRMATION"
-            --reviewed-canonical-manifest="$REVIEWED_CANONICAL_MANIFEST"
-            --reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"
             --expected-deployed-sha="$GITHUB_SHA"
             --video-review-job-id="$JOB_ID"
             --video-review-candidate-id="$CANDIDATE_ID"
             --video-review-revision="$REVISION"
             --video-review-report-sha256="$REPORT_SHA256"
           )
+          # Full-run jobs: the reviewed manifest artifact. Extra moves: the Worker's
+          # recorded approved-source proof, pinned to the inspected proof SHA-256.
+          if [[ -n "${REVIEWED_CANONICAL_MANIFEST:-}" ]]; then
+            args+=(
+              --reviewed-canonical-manifest="$REVIEWED_CANONICAL_MANIFEST"
+              --reviewed-manifest-run-id="$REVIEWED_MANIFEST_RUN_ID"
+            )
+          fi
+          [[ -z "${EXTRA_SOURCE_PROOF_SHA256:-}" ]] ||
+            args+=(--expected-video-extra-source-proof-sha256="$EXTRA_SOURCE_PROOF_SHA256")
           if [[ "$REQUESTED_OPERATION" == "inspect" ]]; then
             args+=(--video-review-inspect --video-review-export-dir="$RUNNER_TEMP/video-review")
           else
