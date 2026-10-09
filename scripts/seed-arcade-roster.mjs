@@ -989,6 +989,18 @@ function arcadePayload(manifest, fighter, status, slug = fighter.slug) {
   };
 }
 
+/** The consent version the live Worker requires, from its public /health. */
+export async function currentLegalVersion(baseUrl, request = fetch) {
+  try {
+    const response = await request(`${String(baseUrl).replace(/\/+$/, '')}/health`, {
+      redirect: 'error', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const body = await response.json();
+    return typeof body?.legalVersion === 'string' && /^\d{4}-\d{2}-\d{2}\.\d+$/.test(body.legalVersion) ? body.legalVersion : null;
+  } catch { return null; }
+}
+
 function generationLegal(manifest) {
   return {
     legalVersion: manifest.legalVersion,
@@ -3189,6 +3201,10 @@ export async function runReviewGatedVideoExtraStep({
     job = assertReviewGatedVideoJob(pending, fighterId, boundManifest, { extraMove: animation });
     mode = pending.reviewStatus === 'awaiting_review' ? 'reused-review' : 'resumed-poll';
   } else {
+    // The roster manifest pins the consent version it was seeded under; a new
+    // move is generated now, so it is accepted under the terms in force today,
+    // which the Worker publishes on /health.
+    const legalVersion = await currentLegalVersion(baseUrl) ?? manifest.legalVersion;
     const started = await requestApi(
       baseUrl,
       token,
@@ -3196,7 +3212,7 @@ export async function runReviewGatedVideoExtraStep({
       {
         method: 'POST',
         body: JSON.stringify({
-          legal: generationLegal(manifest),
+          legal: { ...generationLegal(manifest), legalVersion },
           canonicalSourceMode: boundManifest.canonicalSourceMode,
           canonicalSourceHashes: boundManifest.canonicalSourceHashes,
           expectedSourceProofSha256: liveProof.proofSha256,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { clerkFrontendApiFromPublishableKey, openClerkAdminSession } from './seed-arcade-roster.mjs';
+import { clerkFrontendApiFromPublishableKey, currentLegalVersion, openClerkAdminSession } from './seed-arcade-roster.mjs';
 
 describe('run-owned Arcade admin session', () => {
   it('derives the Frontend API host from a publishable key', () => {
@@ -27,5 +27,13 @@ describe('run-owned Arcade admin session', () => {
       ? new Response(JSON.stringify({ token: 't' }), { status: 200 })
       : new Response(JSON.stringify({ response: { status: 'needs_second_factor' } }), { status: 200 }));
     await expect(openClerkAdminSession('sk', 'user_admin', 'clerk.insertplayer.ai', request)).rejects.toThrow(/headless Arcade admin sign-in failed/);
+  });
+
+  it('reads the consent version the live Worker requires from /health', async () => {
+    const ok = vi.fn(async () => new Response(JSON.stringify({ status: 'ok', legalVersion: '2026-09-15.1' }), { status: 200 }));
+    await expect(currentLegalVersion('https://api.insertplayer.ai/', ok)).resolves.toBe('2026-09-15.1');
+    expect(ok.mock.calls[0][0]).toBe('https://api.insertplayer.ai/health');
+    const bad = vi.fn(async () => new Response(JSON.stringify({ legalVersion: 'latest' }), { status: 200 }));
+    await expect(currentLegalVersion('https://api.insertplayer.ai', bad)).resolves.toBeNull();
   });
 });
