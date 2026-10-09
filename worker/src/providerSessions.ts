@@ -22,6 +22,7 @@ import { ResponseBodyTooLargeError } from './streamLimits';
 import { PROVIDER_REQUEST_BODY_LIMITS, type ProviderName } from './providerLimits';
 import { geminiEstimatedCostCents } from './geminiTransport';
 import { GENERATION_ANIMATION_NAMES } from './generationArtifacts';
+import { isVideoSpriteExtraAction } from '../../src/services/VideoSpriteCompileContract';
 import type { GenerationCreationFlow } from '../../src/services/GenerationCreationFlow';
 import { getTemplateAtlasPlanIds, TEMPLATE_ATLAS_ANIMATION_NAMES } from '../../src/services/TemplateAtlasContract';
 
@@ -331,26 +332,50 @@ function isPixcliAdvancedSubmission(
     route.path === '/proxy/pixcli/api/v1/video/advanced';
 }
 
-function isCanonicalPixcliDispatchKey(requestKey: string, artifactRunId: string): boolean {
-  const prefix = `run:${artifactRunId}:sprite:`;
+function isCanonicalPixcliDispatchKey(
+  requestKey: string,
+  context: { artifactRunId: string; operation: string; targetKind: string | null; targetName: string | null },
+): boolean {
+  const prefix = `run:${context.artifactRunId}:sprite:`;
   if (!requestKey.startsWith(prefix)) return false;
   const action = requestKey.slice(prefix.length);
-  return (GENERATION_ANIMATION_NAMES as readonly string[]).includes(action);
+  if ((GENERATION_ANIMATION_NAMES as readonly string[]).includes(action)) return true;
+  // A review-gated extra special move dispatches only its own job's target.
+  return isVideoSpriteExtraAction(action) && context.operation === 'fighter_retry_animation'
+    && context.targetKind === 'animation' && context.targetName === action;
 }
 
 async function generationRequestContext(
   env: Env,
   auth: PublicAuthContext,
   jobId: string,
-): Promise<{ jobId: string; artifactRunId: string } | null> {
+): Promise<{
+  jobId: string;
+  artifactRunId: string;
+  operation: string;
+  targetKind: string | null;
+  targetName: string | null;
+} | null> {
   const job = await env.DB.prepare(`
-    SELECT id, artifact_run_id
+    SELECT id, artifact_run_id, operation, target_kind, target_name
     FROM generation_jobs
     WHERE id = ? AND user_id = ? AND status IN ('queued', 'running')
     LIMIT 1
-  `).bind(jobId, auth.userId ?? '').first<{ id: string; artifact_run_id: string | null }>();
+  `).bind(jobId, auth.userId ?? '').first<{
+    id: string;
+    artifact_run_id: string | null;
+    operation: string;
+    target_kind: string | null;
+    target_name: string | null;
+  }>();
   if (!job?.artifact_run_id) return null;
-  return { jobId: job.id, artifactRunId: job.artifact_run_id };
+  return {
+    jobId: job.id,
+    artifactRunId: job.artifact_run_id,
+    operation: job.operation,
+    targetKind: job.target_kind,
+    targetName: job.target_name,
+  };
 }
 
 function digestHex(digest: ArrayBuffer): string {
@@ -469,7 +494,7 @@ async function beginProviderRequestCache(
   const terminalOnUpstreamResponse = pixcliSubmission || atlasSubmission;
   if (
     pixcliSubmission &&
-    !isCanonicalPixcliDispatchKey(requestKey, artifactRunId)
+    !isCanonicalPixcliDispatchKey(requestKey, requestContext)
   ) {
     return json({
       error: 'PixCLI video dispatch requires the canonical run and action request key',

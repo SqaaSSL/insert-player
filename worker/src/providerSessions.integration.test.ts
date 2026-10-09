@@ -73,7 +73,10 @@ const SCHEMA = `
     user_id TEXT NOT NULL,
     provider_session_id TEXT NOT NULL,
     artifact_run_id TEXT,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    operation TEXT NOT NULL DEFAULT 'fighter_generation',
+    target_kind TEXT,
+    target_name TEXT
   );
   CREATE TABLE generation_artifact_runs (
     creation_package TEXT NOT NULL DEFAULT 'complete',
@@ -568,6 +571,8 @@ describe('durable provider request cache against D1 and R2', () => {
       for (const requestKey of [
         `job:${JOB_ID}:sprite:high_kick`,
         `run:${JOB_ID}:sprite:not_an_action`,
+        // An extra special move is dispatched only by a job whose own target it is.
+        `run:${JOB_ID}:sprite:fireball`,
       ]) {
         const response = await requireProviderSession(
           pixcliRequest(
