@@ -170,6 +170,25 @@ describe('reviewed canonical source checkpoint import', () => {
     }
   }, 30_000);
 
+  it('imports sealed sources for an extra special move job, and still refuses an ordinary retry', async () => {
+    // Production 2026-10-09: the first fireball job for an active Champion
+    // failed at source:side because only fighter_generation was admitted.
+    const { mf, db, bucket, env } = await bindings();
+    try {
+      const sealed = await stageSealed(db, bucket);
+      const extraJob = { ...job, operation: 'fighter_retry_animation', target_kind: 'animation', target_name: 'fireball' } as GenerationJob;
+      await expect(importReviewedCanonicalSourceCheckpoint(env, extraJob, sealed, 'side', 1)).resolves.toEqual({
+        cleanKey: sealed.sources.side.processed.blobKey,
+        rawKey: sealed.sources.side.raw.blobKey,
+      });
+      const ordinaryRetry = { ...job, operation: 'fighter_retry_animation', target_kind: 'animation', target_name: 'high_punch' } as GenerationJob;
+      await expect(importReviewedCanonicalSourceCheckpoint(env, ordinaryRetry, sealed, 'upright', 2))
+        .rejects.toThrow('Reviewed canonical sources do not match this Video job');
+    } finally {
+      await mf.dispose();
+    }
+  }, 30_000);
+
   it('keeps legacy manifests compatible while fail-closing a malformed reviewed seal', () => {
     const legacy = generationSourceManifest({
       side: 'side',
