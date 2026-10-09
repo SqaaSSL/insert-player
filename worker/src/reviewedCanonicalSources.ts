@@ -1,3 +1,4 @@
+import { isVideoSpriteExtraAction } from '../../src/services/VideoSpriteCompileContract';
 import { hashString } from './auth';
 import { recordSourceCheckpoint, requireArtifactRunId } from './generationArtifacts';
 import type { Env, GenerationArtifactCheckpoint, GenerationJob, SourceVersion } from './types';
@@ -358,8 +359,12 @@ export async function importReviewedCanonicalSourceCheckpoint(
   sourceName: ReviewedCanonicalSourceName,
   stageIndex: number,
 ): Promise<{ cleanKey: string; rawKey: string }> {
+  // A full reviewed Video run, or one extra special move (fireball/uppercut)
+  // added to an already reviewed Champion, which reuses the same sealed sources.
+  const reviewedExtra = job.operation === 'fighter_retry_animation'
+    && job.target_kind === 'animation' && isVideoSpriteExtraAction(job.target_name);
   if (
-    job.creation_flow !== 'video' || job.operation !== 'fighter_generation' ||
+    job.creation_flow !== 'video' || (job.operation !== 'fighter_generation' && !reviewedExtra) ||
     sealed.fighterId !== job.fighter_id || sealed.ownerUserId !== job.user_id
   ) {
     throw new ReviewedCanonicalSourceError('Reviewed canonical sources do not match this Video job');
