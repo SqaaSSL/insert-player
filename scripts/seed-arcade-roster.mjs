@@ -316,17 +316,67 @@ export async function clerkRequest(secretKey, path, init = {}, request = fetch) 
   return body;
 }
 
-async function createClerkAdminTokenProvider(secretKey, userId) {
+/** `pk_live_<base64("clerk.example.com$")>` -> `clerk.example.com`. */
+export function clerkFrontendApiFromPublishableKey(publishableKey) {
+  const match = /^pk_(?:live|test)_([A-Za-z0-9+/=_-]+)$/.exec(String(publishableKey ?? '').trim());
+  if (!match) return null;
+  try {
+    const host = Buffer.from(match[1].replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8').replace(/\$$/, '');
+    return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(host) ? host : null;
+  } catch { return null; }
+}
+
+/**
+ * Maintainer automation must not depend on someone keeping a browser tab
+ * signed in (owner decision 2026-10-08). With no active admin session, mint a
+ * one-time Clerk sign-in token (Backend API, 120 s) and redeem it headlessly
+ * on the Frontend API in native mode. The session belongs to this run and is
+ * revoked when the process finishes.
+ */
+export async function openClerkAdminSession(secretKey, userId, frontendApi, request = fetch) {
+  const ticket = await clerkRequest(secretKey, '/sign_in_tokens', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: userId, expires_in_seconds: 120 }),
+  }, request);
+  if (typeof ticket.token !== 'string' || !ticket.token) throw new Error('Clerk did not return an Arcade admin sign-in token.');
+  const response = await request(`https://${frontendApi}/v1/client/sign_ins?_is_native=1`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ strategy: 'ticket', ticket: ticket.token }).toString(),
+    redirect: 'error',
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  let body = {};
+  try { body = text ? JSON.parse(text) : {}; } catch { body = {}; }
+  const signIn = body.response ?? body;
+  if (!response.ok || signIn?.status !== 'complete' || typeof signIn.created_session_id !== 'string' || !signIn.created_session_id) {
+    throw new Error(clerkErrorDetail(body, `Clerk headless Arcade admin sign-in failed with HTTP ${response.status}.`));
+  }
+  return signIn.created_session_id;
+}
+
+async function createClerkAdminTokenProvider(secretKey, userId, { frontendApi = null, request = fetch } = {}) {
   const params = new URLSearchParams({
     user_id: userId,
     status: 'active',
     limit: '20',
   });
-  const listed = await clerkRequest(secretKey, `/sessions?${params}`);
+  const listed = await clerkRequest(secretKey, `/sessions?${params}`, {}, request);
   const sessions = Array.isArray(listed.data) ? listed.data : Array.isArray(listed) ? listed : [];
-  const session = sessions.find((entry) => entry?.user_id === userId && entry?.status === 'active');
+  let session = sessions.find((entry) => entry?.user_id === userId && entry?.status === 'active');
+  if (!session?.id && frontendApi) {
+    const id = await openClerkAdminSession(secretKey, userId, frontendApi, request);
+    session = { id, user_id: userId, status: 'active' };
+    process.once('beforeExit', () => {
+      clerkRequest(secretKey, `/sessions/${encodeURIComponent(id)}/revoke`, { method: 'POST' }, request)
+        .then(() => console.log('Revoked the run-owned Arcade admin session.'))
+        .catch((error) => console.warn(`Could not revoke the run-owned Arcade admin session: ${error.message}`));
+    });
+    console.log('Opened a run-owned Arcade admin session (no browser session was required).');
+  }
   if (!session?.id) {
-    throw new Error('The configured Arcade admin has no active Clerk session. Sign in to the target app and retry.');
+    throw new Error('The configured Arcade admin has no active Clerk session and no Clerk publishable key was provided for a headless sign-in.');
   }
 
   let cachedToken = '';
@@ -336,7 +386,7 @@ async function createClerkAdminTokenProvider(secretKey, userId) {
     const created = await clerkRequest(secretKey, `/sessions/${encodeURIComponent(session.id)}/tokens`, {
       method: 'POST',
       body: JSON.stringify({ expires_in_seconds: CLERK_TOKEN_TTL_SECONDS }),
-    });
+    }, request);
     if (typeof created.jwt !== 'string' || !created.jwt) {
       throw new Error('Clerk did not return an Arcade admin session token.');
     }
@@ -4096,7 +4146,9 @@ async function main() {
     );
   }
   const token = clerkSecretKey
-    ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId)
+    ? await createClerkAdminTokenProvider(clerkSecretKey, clerkUserId, {
+      frontendApi: clerkFrontendApiFromPublishableKey(envValue(env, 'ASF_CLERK_PUBLISHABLE_KEY') || envValue(env, 'VITE_CLERK_PUBLISHABLE_KEY')),
+    })
     : createStaticTokenProvider(staticToken);
 
   if (postApprovedRecurationOperation) {
