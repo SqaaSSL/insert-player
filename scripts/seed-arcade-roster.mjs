@@ -1713,7 +1713,9 @@ export function assertReviewGatedVideoExtraFighter({ manifest, fighter, entry, o
   }
   const mismatches = [
     entry.slug === fighter.slug ? null : 'slug',
-    entry.fighterName === fighter.name ? null : 'name',
+    // A promoted Champion keeps its public name (e.g. migration 0034 renamed
+    // "Rosalía V2" to "Rosalía"), recorded as the roster's publicName.
+    entry.fighterName === (fighter.publicName ?? fighter.name) ? null : 'name',
     entry.qualityTier === 'champion' ? null : 'tier',
     entry.status === 'active' || entry.status === 'draft' ? null : 'status',
   ].filter(Boolean);
