@@ -13,6 +13,12 @@ export interface SealedVideoRosterImport {
   slug: string;
   sourceHashes: ReviewedCanonicalSourceHashes;
   sprites: Readonly<Record<string, { processedSha256: string; rawSha256: string }>>;
+  /**
+   * Live successors of a pinned sprite installed before recuration transitions
+   * were recorded. They are approved because they are what production serves;
+   * each must stay the exact byte pair found live.
+   */
+  liveSuccessors?: Readonly<Record<string, readonly { processedSha256: string; rawSha256: string }[]>>;
 }
 
 const TRUMP_SIDE = {
@@ -79,6 +85,14 @@ const TRUMP_VIDEO_ROSTER_IMPORT: SealedVideoRosterImport = {
       processedSha256: 'a811d5ef0b5988bf4c341aac4d2e677877c00659acf8ce7b867519e9ae72b13c',
       rawSha256: '6c87c71cbb6ec80a5cc9309c21e88a5cbe3c86423534c7a826e7a07e4f6f9b98',
     },
+  },
+  liveSuccessors: {
+    // Processing-v6 recut of the bundle idle (sprite version 4a15e06c…,
+    // 2026-08-28 14:45 UTC), live since then with no recuration transition.
+    idle: [{
+      processedSha256: 'd8f27ac23f32d6093f6c58691aaf17801ca8e6beafae4502c14b2de1c8568d05',
+      rawSha256: 'ad733cdda5a2a47829004a532ffed39c9f72b35541603b12405c79405eee15e4',
+    }],
   },
 };
 
