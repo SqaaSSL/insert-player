@@ -350,10 +350,13 @@ export async function proveVideoExtraSources(
           };
           break;
         }
-        const pinned = sealedImport?.sprites[action];
+        const pinned = sealedImport
+          ? [sealedImport.sprites[action], ...(sealedImport.liveSuccessors?.[action] ?? [])].filter(Boolean)
+          : [];
         if (
-          sealedImport && pinned && version.content_hash === pinned.processedSha256 &&
-          version.raw_content_hash === pinned.rawSha256
+          sealedImport && pinned.some((pair) => (
+            version!.content_hash === pair.processedSha256 && version!.raw_content_hash === pair.rawSha256
+          ))
         ) {
           origins.set(sealedImport.bundleId, {
             kind: 'sealed-roster-import',

@@ -2141,6 +2141,16 @@ describe('approved-source proof for extra Video moves', () => {
       // A bundle for another fighter is ignored.
       await expect(proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, { ...sealedImport, fighterId: 'e'.repeat(32) }))
         .rejects.toThrow(/does not trace back/);
+      // A live recut installed without a transition proves only when pinned as a successor.
+      const recut = { processedSha256: 'c'.repeat(64), rawSha256: 'd'.repeat(64) };
+      const bundleIdle = { ...sealedImport, sprites: { ...sealedImport.sprites, idle: recut } };
+      await expect(proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, bundleIdle))
+        .rejects.toThrow(/live idle sprite does not trace back/);
+      const withSuccessor = { ...bundleIdle, liveSuccessors: { idle: [sealedImport.sprites.idle] } };
+      expect((await proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, withSuccessor)).proof.origins)
+        .toEqual([{ kind: 'sealed-roster-import', bundleId: 'test-bundle-v1', sourceHashes: await sealedRunHashes(harness) }]);
+      await expect(proveVideoExtraSources(harness.env, FIGHTER_ID, USER_ID, { ...bundleIdle, liveSuccessors: { walk: [sealedImport.sprites.idle] } }))
+        .rejects.toThrow(/live idle sprite does not trace back/);
     } finally {
       await harness.mf.dispose();
     }
