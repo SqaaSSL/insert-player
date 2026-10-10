@@ -13,6 +13,7 @@ import {
   REVIEW_GATED_VIDEO_EXTRA_ACTIONS,
   REVIEW_GATED_VIDEO_EXTRA_CONFIRMATION,
   assertAwaitingVideoReview,
+  assertReviewGatedVideoExtraFighter,
   assertReviewGatedVideoExtraConfirmation,
   assertReviewedExtraActivationConfirmation,
   bindReviewCanonicalSources,
@@ -296,5 +297,23 @@ describe('review-gated extra Video moves in the operator script', () => {
     };
     await expect(setReviewedArcadeExtraPublication({ ...options(awaitingApi), jobId: JOB_ID, operation: 'activate' }))
       .rejects.toThrow(/not approved/);
+  });
+});
+
+describe('Extra-move Champion identity', () => {
+  const rosalia = manifest.fighters.find((entry) => entry.slug === 'rosalia-v2');
+  const live = (fighterName) => ({
+    fighterId: FIGHTER_ID, fighterName, qualityTier: 'champion', slug: rosalia.slug, status: 'active',
+  });
+  const owned = { id: FIGHTER_ID, qualityTier: 'champion', photoHash: rosalia.reference.sourceSha256 };
+  const check = (fighterName) => assertReviewGatedVideoExtraFighter({
+    manifest, fighter: rosalia, entry: live(fighterName), owned, approvedPhotoHash: rosalia.reference.sourceSha256,
+  });
+
+  it('accepts the public name a promotion gave the Champion, and nothing else', () => {
+    expect(rosalia.publicName).toBe('Rosalía');
+    expect(check('Rosalía')).toEqual({ fighterId: FIGHTER_ID });
+    expect(() => check('Rosalía V2')).toThrow('name');
+    expect(() => check('Rosalia')).toThrow('name');
   });
 });
