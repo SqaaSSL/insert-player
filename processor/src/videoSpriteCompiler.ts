@@ -32,6 +32,11 @@ import {
   type VideoSpriteExtractedMedia,
   type VideoSpriteMediaAdapter,
 } from './videoSpriteMedia.ts';
+import {
+  VIDEO_SPRITE_PIXEL_CLEANUP,
+  cleanVideoSpritePixels,
+  type VideoSpriteBackground,
+} from './videoSpriteBackground.ts';
 
 function sha256(value: Uint8Array | string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -63,6 +68,7 @@ function canonicalJson(value: unknown): string {
 async function decodeNormalizedPng(
   bytes: Buffer,
   sourceIndex: number | null,
+  background: VideoSpriteBackground,
   expectedWidth: number = VIDEO_SPRITE_FRAME_WIDTH,
   expectedHeight: number = VIDEO_SPRITE_FRAME_HEIGHT,
 ): Promise<VideoSpriteRgbaFrame> {
@@ -83,18 +89,7 @@ async function decodeNormalizedPng(
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0);
   const data = new Uint8ClampedArray(context.getImageData(0, 0, image.width, image.height).data);
-  for (let offset = 0; offset < data.length; offset += 4) {
-    const alpha = data[offset + 3];
-    if (alpha === 0) {
-      data[offset] = 0;
-      data[offset + 1] = 0;
-      data[offset + 2] = 0;
-      continue;
-    }
-    if (alpha < 250 && data[offset + 1] > Math.max(data[offset], data[offset + 2]) + 8) {
-      data[offset + 1] = Math.max(data[offset], data[offset + 2]);
-    }
-  }
+  cleanVideoSpritePixels(data, image.width, image.height, background);
   return {
     width: image.width,
     height: image.height,
@@ -247,9 +242,10 @@ export async function compileExtractedVideoSprite(
 ): Promise<VideoSpriteCompileResult> {
   const automaticSelectionPolicy = request.automaticSelectionPolicy ??
     DEFAULT_VIDEO_SPRITE_AUTOMATIC_SELECTION_POLICY;
+  const background = media.background ?? 'chroma-green';
   const [canonical, ...videoFrames] = await Promise.all([
-    decodeNormalizedPng(media.canonicalPng, null),
-    ...media.videoFramePngs.map((bytes, index) => decodeNormalizedPng(bytes, index)),
+    decodeNormalizedPng(media.canonicalPng, null, background),
+    ...media.videoFramePngs.map((bytes, index) => decodeNormalizedPng(bytes, index, background)),
   ]);
   let compiled: VideoSpriteCoreCompileResult;
   try {
@@ -270,6 +266,7 @@ export async function compileExtractedVideoSprite(
   const archivalCanonical = await decodeNormalizedPng(
     archivalMedia.canonicalPng,
     null,
+    background,
     VIDEO_SPRITE_RAW_FRAME_WIDTH,
     VIDEO_SPRITE_RAW_FRAME_HEIGHT,
   );
@@ -277,6 +274,7 @@ export async function compileExtractedVideoSprite(
     decodeNormalizedPng(
       bytes,
       compiled.selectedVideoIndices[index],
+      background,
       VIDEO_SPRITE_RAW_FRAME_WIDTH,
       VIDEO_SPRITE_RAW_FRAME_HEIGHT,
     )
@@ -372,7 +370,7 @@ export async function compileExtractedVideoSprite(
     },
     extraction: {
       toolchain: media.toolchain,
-      pixelCleanup: 'transparent-rgb-zero+translucent-green-despill-v1',
+      pixelCleanup: VIDEO_SPRITE_PIXEL_CLEANUP[background],
       decodedFrameCount: videoFrames.length,
       selectedVideoIndices: compiled.selectedVideoIndices,
       selectionAlgorithm: request.selectedVideoIndices

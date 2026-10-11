@@ -7,6 +7,11 @@ chroma green, flattened to one fill. Output is deterministic for a given Pillow 
 transform JSON is what canonical_headroom_derivatives.transform_json records.
 
   python3 scripts/derive_canonical_headroom.py IN.png OUT.png --target-height 0.78
+  python3 scripts/derive_canonical_headroom.py IN.png OUT.png --target-height 0.60 --background white
+
+With --background white the figure goes on pure white, with the green spill on its
+anti-aliased rim clamped; the Video pipeline then asks the provider for a white
+backdrop and keys it with the border white key.
 """
 import argparse
 import hashlib
@@ -14,7 +19,7 @@ import json
 import sys
 
 import PIL
-from PIL import Image
+from PIL import Image, ImageFilter
 
 
 def chroma_mask(rgb):
@@ -36,11 +41,26 @@ def border_fill(rgb):
     return tuple(sorted(channel)[len(channel) // 2] for channel in zip(*samples))
 
 
+def despill_rim(canvas, figure, radius=3):
+    """Clamps green spill on figure pixels within radius of the backdrop."""
+    solid = figure.convert('L').filter(ImageFilter.MinFilter(2 * radius + 1)).load()
+    pixels, mask = canvas.load(), figure.load()
+    width, height = canvas.size
+    for y in range(height):
+        for x in range(width):
+            if mask[x, y] and not solid[x, y]:
+                r, g, b = pixels[x, y]
+                if g > max(r, b):
+                    pixels[x, y] = (r, max(r, b), b)
+    return canvas
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('source')
     parser.add_argument('output')
     parser.add_argument('--target-height', type=float, default=0.78)
+    parser.add_argument('--background', choices=('chroma-green', 'white'), default='chroma-green')
     args = parser.parse_args()
 
     source_bytes = open(args.source, 'rb').read()
@@ -63,14 +83,19 @@ def main():
     canvas.paste(scaled, offset)
     # Flatten every chroma pixel to the one fill so the pasted rectangle leaves
     # no visible seam on a source whose green is not perfectly uniform.
-    canvas = Image.composite(canvas, Image.new('RGB', (width, height), fill), chroma_mask(canvas))
+    figure = chroma_mask(canvas)
+    if args.background == 'white':
+        canvas = despill_rim(canvas, figure)
+        fill = (255, 255, 255)
+    canvas = Image.composite(canvas, Image.new('RGB', (width, height), fill), figure)
     if source.mode == 'RGBA':
         canvas = canvas.convert('RGBA')
     canvas.save(args.output, format='PNG', optimize=False)
 
     output_bytes = open(args.output, 'rb').read()
     print(json.dumps({
-        'kind': 'headroom-pad-v2',
+        'kind': 'headroom-pad-v2' if args.background == 'chroma-green' else 'headroom-pad-v3',
+        'background': args.background,
         'tool': f'Pillow {PIL.__version__}',
         'resampler': 'lanczos',
         'targetFigureHeightRatio': args.target_height,

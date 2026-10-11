@@ -10,18 +10,27 @@ import {
   VIDEO_SPRITE_SAMPLE_FPS,
   VideoSpriteCompileError,
 } from './videoSpriteContract.ts';
+import {
+  detectVideoSpriteBackground,
+  videoSpriteKeyFilter,
+  videoSpritePadColor,
+  type VideoSpriteBackground,
+} from './videoSpriteBackground.ts';
 
 const COMMAND_OUTPUT_LIMIT = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 45_000;
 const MAX_DECODED_FRAMES = 144;
 const ALLOWED_VIDEO_CODECS = new Set(['h264', 'hevc', 'mpeg4', 'vp9', 'av1']);
 
-export const VIDEO_SPRITE_NORMALIZE_FILTER = [
-  'chromakey=0x00FF00:0.20:0.08',
-  'format=rgba',
-  `scale=${VIDEO_SPRITE_FRAME_WIDTH}:${VIDEO_SPRITE_FRAME_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos`,
-  `pad=${VIDEO_SPRITE_FRAME_WIDTH}:${VIDEO_SPRITE_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
-].join(',');
+export function videoSpriteNormalizeFilter(background: VideoSpriteBackground): string {
+  return [
+    videoSpriteKeyFilter(background),
+    `scale=${VIDEO_SPRITE_FRAME_WIDTH}:${VIDEO_SPRITE_FRAME_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos`,
+    `pad=${VIDEO_SPRITE_FRAME_WIDTH}:${VIDEO_SPRITE_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=${videoSpritePadColor(background)}`,
+  ].join(',');
+}
+
+export const VIDEO_SPRITE_NORMALIZE_FILTER = videoSpriteNormalizeFilter('chroma-green');
 
 export interface VideoSpriteProbe {
   codecName: string;
@@ -39,11 +48,14 @@ export interface VideoSpriteMediaToolchain {
   ffprobeVersion: string;
   sampleFps: number;
   normalizeFilter: string;
+  background?: VideoSpriteBackground;
 }
 
 export interface VideoSpriteExtractedMedia {
   probe: VideoSpriteProbe;
   toolchain: VideoSpriteMediaToolchain;
+  /** Absent means chroma green, the only backdrop before white existed. */
+  background?: VideoSpriteBackground;
   canonicalPng: Buffer;
   videoFramePngs: Buffer[];
   extractArchival(selectedVideoIndices: number[]): Promise<{
@@ -198,36 +210,37 @@ function requireApprovedMediaVersion(binary: 'ffmpeg' | 'ffprobe', actual: strin
   }
 }
 
-function normalizedStillArgs(input: string, output: string): string[] {
+function normalizedStillArgs(input: string, output: string, background: VideoSpriteBackground): string[] {
   return [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     '-threads', '1', '-filter_threads', '1', '-i', input,
     '-map', '0:v:0', '-an', '-sn', '-dn',
-    '-vf', VIDEO_SPRITE_NORMALIZE_FILTER,
+    '-vf', videoSpriteNormalizeFilter(background),
     '-frames:v', '1', '-compression_level', '9', output,
   ];
 }
 
-const VIDEO_SPRITE_ARCHIVAL_FILTER = [
-  'chromakey=0x00FF00:0.20:0.08',
-  'format=rgba',
-  `scale=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos`,
-  `pad=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=0x00000000`,
-].join(',');
+function videoSpriteArchivalFilter(background: VideoSpriteBackground): string {
+  return [
+    videoSpriteKeyFilter(background),
+    `scale=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:force_original_aspect_ratio=decrease:flags=lanczos`,
+    `pad=${VIDEO_SPRITE_RAW_FRAME_WIDTH}:${VIDEO_SPRITE_RAW_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=${videoSpritePadColor(background)}`,
+  ].join(',');
+}
 
-function archivalStillArgs(input: string, output: string): string[] {
+function archivalStillArgs(input: string, output: string, background: VideoSpriteBackground): string[] {
   return [
     '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
     '-threads', '1', '-filter_threads', '1', '-i', input,
     '-map', '0:v:0', '-an', '-sn', '-dn',
-    '-vf', VIDEO_SPRITE_ARCHIVAL_FILTER,
+    '-vf', videoSpriteArchivalFilter(background),
     '-frames:v', '1', '-compression_level', '9', output,
   ];
 }
 
-function selectedFrameFilter(indices: number[]): string {
+function selectedFrameFilter(indices: number[], background: VideoSpriteBackground): string {
   const expression = indices.map((index) => `eq(n\\,${index})`).join('+');
-  return `fps=${VIDEO_SPRITE_SAMPLE_FPS},select=${expression},${VIDEO_SPRITE_ARCHIVAL_FILTER}`;
+  return `fps=${VIDEO_SPRITE_SAMPLE_FPS},select=${expression},${videoSpriteArchivalFilter(background)}`;
 }
 
 export function createFfmpegVideoSpriteMediaAdapter(options: {
@@ -269,12 +282,14 @@ export function createFfmpegVideoSpriteMediaAdapter(options: {
           throw new VideoSpriteCompileError('invalid_video_probe', 'ffprobe did not return valid JSON.');
         }
         const probe = parseVideoSpriteProbe(probeDocument, videoBytes.byteLength);
-        await run(ffmpegBinary, normalizedStillArgs(canonicalInputPath, canonicalOutputPath));
+        const background = await detectVideoSpriteBackground(canonicalBytes);
+        const normalizeFilter = videoSpriteNormalizeFilter(background);
+        await run(ffmpegBinary, normalizedStillArgs(canonicalInputPath, canonicalOutputPath, background));
         await run(ffmpegBinary, [
           '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
           '-threads', '1', '-filter_threads', '1', '-i', videoPath,
           '-map', '0:v:0', '-an', '-sn', '-dn',
-          '-vf', `fps=${VIDEO_SPRITE_SAMPLE_FPS},${VIDEO_SPRITE_NORMALIZE_FILTER}`,
+          '-vf', `fps=${VIDEO_SPRITE_SAMPLE_FPS},${normalizeFilter}`,
           '-frames:v', String(MAX_DECODED_FRAMES),
           '-fps_mode', 'vfr', '-compression_level', '9',
           join(rawDir, 'frame-%04d.png'),
@@ -295,8 +310,10 @@ export function createFfmpegVideoSpriteMediaAdapter(options: {
             ffmpegVersion,
             ffprobeVersion,
             sampleFps: VIDEO_SPRITE_SAMPLE_FPS,
-            normalizeFilter: VIDEO_SPRITE_NORMALIZE_FILTER,
+            normalizeFilter,
+            ...(background === 'white' ? { background } : {}),
           },
+          background,
           canonicalPng,
           videoFramePngs,
           async extractArchival(selectedVideoIndices) {
@@ -326,12 +343,13 @@ export function createFfmpegVideoSpriteMediaAdapter(options: {
               await run(ffmpegBinary, archivalStillArgs(
                 archivalCanonicalInputPath,
                 archivalCanonicalOutputPath,
+                background,
               ));
               await run(ffmpegBinary, [
                 '-hide_banner', '-loglevel', 'error', '-nostdin', '-y',
                 '-threads', '1', '-filter_threads', '1', '-i', archivalVideoPath,
                 '-map', '0:v:0', '-an', '-sn', '-dn',
-                '-vf', selectedFrameFilter(selectedVideoIndices),
+                '-vf', selectedFrameFilter(selectedVideoIndices, background),
                 '-frames:v', String(selectedVideoIndices.length),
                 '-fps_mode', 'vfr', '-compression_level', '9',
                 join(selectedDir, 'frame-%04d.png'),

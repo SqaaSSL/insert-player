@@ -1,5 +1,6 @@
 import { hashString } from './auth';
 import type { Env } from './types';
+import type { VideoSpriteBackground } from './videoSpriteGeneration';
 
 /**
  * Headroom derivatives (migration 0049) of a sealed reviewed canonical RAW
@@ -16,6 +17,16 @@ export interface CanonicalHeadroomSource {
 export interface CanonicalHeadroomDerivative {
   blobKey: string;
   sha256: string;
+  /** From transform_json.background; derivatives before white existed are chroma green. */
+  background?: VideoSpriteBackground;
+}
+
+function derivativeBackground(transformJson: string): VideoSpriteBackground {
+  try {
+    return (JSON.parse(transformJson) as { background?: unknown }).background === 'white' ? 'white' : 'chroma-green';
+  } catch {
+    return 'chroma-green';
+  }
 }
 
 const MAX_DERIVATIVE_BYTES = 12 * 1024 * 1024;
@@ -25,14 +36,20 @@ export async function findCanonicalHeadroomDerivative(
   source: CanonicalHeadroomSource,
 ): Promise<CanonicalHeadroomDerivative | null> {
   const row = await env.DB.prepare(`
-    SELECT derived_blob_key, derived_sha256
+    SELECT derived_blob_key, derived_sha256, transform_json
     FROM canonical_headroom_derivatives
     WHERE fighter_id = ? AND source_kind = ?
       AND source_raw_version_id = ? AND source_raw_sha256 = ?
     LIMIT 1
   `).bind(source.fighterId, source.sourceKind, source.rawVersionId, source.rawSha256)
-    .first<{ derived_blob_key: string; derived_sha256: string }>();
-  return row ? { blobKey: row.derived_blob_key, sha256: row.derived_sha256 } : null;
+    .first<{ derived_blob_key: string; derived_sha256: string; transform_json: string }>();
+  return row
+    ? {
+      blobKey: row.derived_blob_key,
+      sha256: row.derived_sha256,
+      background: derivativeBackground(row.transform_json),
+    }
+    : null;
 }
 
 export async function loadCanonicalHeadroomDerivative(

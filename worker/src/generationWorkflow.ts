@@ -338,6 +338,7 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
       blobKey: headroom?.blobKey ?? canonicalKey,
       bytes: canonicalBytes,
       sha256: headroom?.sha256 ?? await hashString(canonicalBytes),
+      background: headroom?.background ?? 'chroma-green',
     }, generationPrompt, videoGenerationPolicy);
   }
 
