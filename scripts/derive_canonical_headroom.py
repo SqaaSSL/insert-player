@@ -3,7 +3,7 @@
 
 The figure is scaled down about the centre of its floor line so it fills
 --target-height of the frame, and the canvas keeps the source size and its own
-chroma green. Output is deterministic for a given Pillow version; the printed
+chroma green, flattened to one fill. Output is deterministic for a given Pillow version; the printed
 transform JSON is what canonical_headroom_derivatives.transform_json records.
 
   python3 scripts/derive_canonical_headroom.py IN.png OUT.png --target-height 0.78
@@ -61,13 +61,16 @@ def main():
     offset = (round(pivot_x - pivot_x * scale), round(pivot_y - pivot_y * scale))
     canvas = Image.new('RGB', (width, height), fill)
     canvas.paste(scaled, offset)
+    # Flatten every chroma pixel to the one fill so the pasted rectangle leaves
+    # no visible seam on a source whose green is not perfectly uniform.
+    canvas = Image.composite(canvas, Image.new('RGB', (width, height), fill), chroma_mask(canvas))
     if source.mode == 'RGBA':
         canvas = canvas.convert('RGBA')
     canvas.save(args.output, format='PNG', optimize=False)
 
     output_bytes = open(args.output, 'rb').read()
     print(json.dumps({
-        'kind': 'headroom-pad-v1',
+        'kind': 'headroom-pad-v2',
         'tool': f'Pillow {PIL.__version__}',
         'resampler': 'lanczos',
         'targetFigureHeightRatio': args.target_height,
