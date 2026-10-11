@@ -21,6 +21,7 @@ import {
   type VideoSpriteCandidateReportProjection,
 } from './videoSpriteGeneration';
 import { parseSealedReviewedCanonicalSources } from './reviewedCanonicalSources';
+import { isCanonicalHeadroomDerivative } from './canonicalHeadroom';
 import {
   requireReviewedProductionWorkerPin,
   validateOptionalReviewedProductionWorkerPin,
@@ -553,8 +554,14 @@ async function requireReviewedCanonicalIntegrity(
   const sourceName = videoAction(row.action).canonical;
   const source = sealed.sources[sourceName];
   if (
-    row.canonical_blob_key !== source.raw.blobKey ||
-    row.canonical_sha256 !== source.raw.contentSha256
+    (row.canonical_blob_key !== source.raw.blobKey ||
+      row.canonical_sha256 !== source.raw.contentSha256) &&
+    !(isVideoSpriteExtraAction(row.action) && await isCanonicalHeadroomDerivative(env, {
+      fighterId: row.fighter_id,
+      sourceKind: sourceName,
+      rawVersionId: source.raw.versionId,
+      rawSha256: source.raw.contentSha256,
+    }, { blobKey: row.canonical_blob_key, sha256: row.canonical_sha256 }))
   ) {
     throw new Error('Video review canonical source does not match its sealed action source');
   }

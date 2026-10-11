@@ -52,6 +52,7 @@ import {
   type SealedReviewedCanonicalSources,
 } from './reviewedCanonicalSources';
 import { officialPoseMasterFor } from './officialPoseMasters';
+import { findCanonicalHeadroomDerivative, loadCanonicalHeadroomDerivative } from './canonicalHeadroom';
 import { createBoundedByteStream } from './streamLimits';
 import {
   storedVideoGenerationPolicy,
@@ -315,11 +316,28 @@ export class FighterGenerationWorkflow extends WorkflowEntrypoint<Env, FighterGe
     ));
     const canonicalKind = videoAction(action).canonical;
     const canonicalKey = canonicalKind === 'crouch' ? sources.crouch.rawKey : sources.side.rawKey;
-    const canonicalBytes = await this.loadAssetBytes(canonicalKey);
+    const sealedRaw = reviewedExtra
+      ? parseSealedReviewedCanonicalSources(artifactRun.source_manifest_json)?.sources[canonicalKind].raw ?? null
+      : null;
+    // An extra move may draw IMAGE 1 from a recorded headroom derivative of the
+    // sealed RAW (an overhead fist needs room the reviewed framing lacks).
+    const headroom = sealedRaw
+      ? await step.do(`video ${action}: resolve canonical headroom derivative`, STEP_CONFIG, () => (
+        findCanonicalHeadroomDerivative(this.env, {
+          fighterId: job.fighter_id,
+          sourceKind: canonicalKind,
+          rawVersionId: sealedRaw.versionId,
+          rawSha256: sealedRaw.contentSha256,
+        })
+      ))
+      : null;
+    const canonicalBytes = headroom
+      ? await loadCanonicalHeadroomDerivative(this.env, headroom)
+      : await this.loadAssetBytes(canonicalKey);
     await runVideoSpriteAction(this.env, step, job, action, {
-      blobKey: canonicalKey,
+      blobKey: headroom?.blobKey ?? canonicalKey,
       bytes: canonicalBytes,
-      sha256: await hashString(canonicalBytes),
+      sha256: headroom?.sha256 ?? await hashString(canonicalBytes),
     }, generationPrompt, videoGenerationPolicy);
   }
 
