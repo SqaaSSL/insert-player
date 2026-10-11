@@ -215,14 +215,24 @@ export function videoAction(action: VideoSpriteCompilableAction): VideoSpriteGen
   return definition;
 }
 
+/** Matches processor/src/videoSpriteBackground.ts. */
+export type VideoSpriteBackground = 'chroma-green' | 'white';
+
+const STUDIO_BACKGROUND_LINE: Readonly<Record<VideoSpriteBackground, string>> = Object.freeze({
+  'chroma-green': 'Keep a perfectly flat, uniform pure #00FF00 background with no floor, shadow, scenery, text, particles, motion blur, or lighting change.',
+  white: 'Keep the perfectly flat, uniform pure white #FFFFFF background of IMAGE 1 with no floor, shadow, scenery, text, particles, motion blur, or lighting change, and keep the outfit colors exactly as in IMAGE 1 with no tint from the background.',
+});
+
 export function buildVideoSpritePrompt(
   action: VideoSpriteCompilableAction,
   generationPrompt?: string,
   policy: VideoGenerationPolicy = STUDIO_CURATED_VIDEO_POLICY,
+  background: VideoSpriteBackground = 'chroma-green',
 ): string {
   const definition = videoAction(action);
   const identityBrief = generationPrompt?.replace(/\s+/g, ' ').trim().slice(0, 2_400);
   if (policy === SELF_SERVICE_VIDEO_POLICY) {
+    if (background !== 'chroma-green') throw new Error('Self-service Video moves use chroma green only.');
     if (isVideoSpriteExtraAction(action)) {
       throw new Error('Extra video actions are studio-curated only.');
     }
@@ -250,7 +260,7 @@ export function buildVideoSpritePrompt(
     identityBrief ? `Preserve this approved character brief: ${identityBrief}` : '',
     'Preserve exactly one connected adult fighter throughout. Never add, remove, duplicate, detach, or morph a head, face, torso, arm, hand, finger, leg, foot, person, prop, trail, or afterimage.',
     'Use a strict 2D orthographic side profile: nose points to the RIGHT EDGE OF IMAGE / positive X, back points to the LEFT EDGE / negative X, and the far shoulder and far hip remain mostly occluded. Never turn frontal, three-quarter, reverse yaw, or horizontally flip. Keep the full body inside the frame with generous transparent-safe margin. No crop, zoom, pan, cut, shake, scale change, perspective change, or camera turn.',
-    'Keep a perfectly flat, uniform pure #00FF00 background with no floor, shadow, scenery, text, particles, motion blur, or lighting change.',
+    STUDIO_BACKGROUND_LINE[background],
   ].filter(Boolean).join(' ');
 }
 

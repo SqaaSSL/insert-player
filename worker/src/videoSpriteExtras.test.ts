@@ -42,6 +42,15 @@ describe('extra Video move generation', () => {
     expect(uppercut).toMatch(/directly above the head/);
     expect(uppercut).toMatch(/not forward toward screen-right/);
     expect(uppercut).not.toMatch(/upward and forward/);
+    expect(uppercut).toContain('#00FF00');
+    expect(buildVideoSpritePrompt('uppercut', 'x', STUDIO_CURATED_VIDEO_POLICY, 'chroma-green')).toBe(uppercut);
+  });
+
+  it('asks for the white backdrop of IMAGE 1 only when the canonical is a white derivative', () => {
+    const white = buildVideoSpritePrompt('uppercut', 'x', STUDIO_CURATED_VIDEO_POLICY, 'white');
+    expect(white).toContain('pure white #FFFFFF background of IMAGE 1');
+    expect(white).not.toContain('#00FF00');
+    expect(() => buildVideoSpritePrompt('idle', 'x', SELF_SERVICE_VIDEO_POLICY, 'white')).toThrow(/chroma green only/);
   });
 
   it('chooses exactly the job target for an extra-move run and refuses foreign or finished candidates', async () => {

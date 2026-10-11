@@ -154,6 +154,7 @@ interface Harness {
   workflowStarts: string[];
   processorRequests: Array<Record<string, unknown>>;
   providerCalls: string[];
+  providerPrompts: string[];
 }
 
 async function harness(): Promise<Harness> {
@@ -178,6 +179,7 @@ async function harness(): Promise<Harness> {
   const workflowStarts: string[] = [];
   const processorRequests: Array<Record<string, unknown>> = [];
   const providerCalls: string[] = [];
+  const providerPrompts: string[] = [];
   const env = {
     DB: db,
     SPRITES: bucket,
@@ -216,7 +218,7 @@ async function harness(): Promise<Harness> {
       }),
     },
   } as unknown as Env;
-  return { mf, db, bucket, env, workflowStarts, processorRequests, providerCalls };
+  return { mf, db, bucket, env, workflowStarts, processorRequests, providerCalls, providerPrompts };
 }
 
 /** A compiler response that satisfies the Worker's report projection for the requested action. */
@@ -337,6 +339,7 @@ function installPixcliProxy(target: Harness): void {
     if (method === 'POST' && path === '/api/v1/uploads') return Response.json({ hash: 'a'.repeat(32) });
     if (method === 'POST' && path === '/api/v1/video/advanced') {
       payload = await request.json() as PixcliVideoPayload;
+      target.providerPrompts.push(payload.prompt);
       return Response.json({ job_id: jobId, deduplicated: false });
     }
     if (method === 'GET' && path === `/api/v1/jobs/${jobId}`) return Response.json({ status: 'completed' });
@@ -794,6 +797,8 @@ describe('review-gated extra Video move end to end on the real migrations', () =
       const jobId = await startAndGenerate(target, 'uppercut');
       expect(Buffer.from(String(target.processorRequests[0].canonicalFrameBase64), 'base64'))
         .toEqual(Buffer.from(derived));
+      expect(target.providerPrompts).toHaveLength(1);
+      expect(target.providerPrompts[0]).toContain('#00FF00');
       expect(await target.db.prepare(`
         SELECT revision.canonical_blob_key, revision.canonical_sha256
         FROM video_sprite_candidates candidate
@@ -814,6 +819,35 @@ describe('review-gated extra Video move end to end on the real migrations', () =
         JOIN source_versions source ON source.blob_key = fighter.side_view_raw_blob_key
         WHERE fighter.id = ?
       `).bind(FIGHTER_ID).first()).toEqual({ content_hash: sideRaw!.content_hash });
+    } finally {
+      await target.mf.dispose();
+    }
+  }, 120_000);
+
+  it('asks the provider for a white backdrop when the recorded derivative is white', async () => {
+    const target = await harness();
+    try {
+      await seedApprovedChampion(target);
+      installPixcliProxy(target);
+      const sideRaw = await target.db.prepare(`
+        SELECT source.id, source.content_hash FROM fighters fighter
+        JOIN source_versions source ON source.blob_key = fighter.side_view_raw_blob_key
+        WHERE fighter.id = ?
+      `).bind(FIGHTER_ID).first<{ id: string; content_hash: string }>();
+      const derived = png(768, 1024, 98);
+      const derivedKey = `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/derived/side_raw_headroom_white.png`;
+      await target.bucket.put(derivedKey, derived);
+      await target.db.prepare(`
+        INSERT INTO canonical_headroom_derivatives (
+          id, fighter_id, source_kind, source_raw_version_id, source_raw_sha256,
+          derived_blob_key, derived_sha256, transform_json
+        ) VALUES (?, ?, 'side', ?, ?, ?, ?, '{"kind":"headroom-pad-v3","background":"white"}')
+      `).bind(hex(0x901), FIGHTER_ID, sideRaw!.id, sideRaw!.content_hash, derivedKey, await hashString(derived)).run();
+
+      await startAndGenerate(target, 'uppercut');
+      expect(target.providerPrompts).toHaveLength(1);
+      expect(target.providerPrompts[0]).toContain('pure white #FFFFFF background of IMAGE 1');
+      expect(target.providerPrompts[0]).not.toContain('#00FF00');
     } finally {
       await target.mf.dispose();
     }

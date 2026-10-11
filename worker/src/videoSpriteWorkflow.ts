@@ -23,6 +23,7 @@ import {
 import {
   buildPixcliVideoPayload,
   buildVideoSpritePrompt,
+  type VideoSpriteBackground,
   canonicalJson,
   deterministicCanonicalMultipart,
   parsePixcliSubmission,
@@ -77,6 +78,8 @@ export interface VideoWorkflowCanonical {
   blobKey: string;
   bytes: ArrayBuffer;
   sha256: string;
+  /** IMAGE 1's backdrop; the processor detects the same from the bytes. */
+  background?: VideoSpriteBackground;
 }
 
 function toBase64(buffer: ArrayBuffer): string {
@@ -479,7 +482,12 @@ export async function runVideoSpriteAction(
   }
   const definition = videoAction(action);
   if (definition.action !== action) throw new NonRetryableError('Video action contract is unavailable');
-  const prompt = buildVideoSpritePrompt(action, generationPrompt, videoGenerationPolicy);
+  const prompt = buildVideoSpritePrompt(
+    action,
+    generationPrompt,
+    videoGenerationPolicy,
+    canonical.background ?? 'chroma-green',
+  );
   const promptSha256 = await hashString(prompt);
   const requestKey = `run:${job.artifact_run_id}:sprite:${action}`;
   const multipart = deterministicCanonicalMultipart(
