@@ -37,6 +37,11 @@ describe('extra Video move generation', () => {
     expect(prompt).toContain('The requested action is FIREBALL.');
     expect(prompt).toContain('RIGHT EDGE OF IMAGE');
     expect(() => buildVideoSpritePrompt('uppercut', 'x', SELF_SERVICE_VIDEO_POLICY)).toThrow(/studio-curated/);
+    const uppercut = buildVideoSpritePrompt('uppercut', 'x');
+    expect(uppercut).toMatch(/straight upward/);
+    expect(uppercut).toMatch(/directly above the head/);
+    expect(uppercut).toMatch(/not forward toward screen-right/);
+    expect(uppercut).not.toMatch(/upward and forward/);
   });
 
   it('chooses exactly the job target for an extra-move run and refuses foreign or finished candidates', async () => {

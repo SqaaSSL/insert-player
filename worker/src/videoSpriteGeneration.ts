@@ -201,7 +201,7 @@ export const VIDEO_SPRITE_EXTRA_GENERATION_ACTIONS: readonly VideoSpriteGenerati
   {
     action: 'uppercut',
     canonical: 'side',
-    motion: 'From the exact supplied stance, dip slightly, then drive one rising uppercut punch upward and forward toward screen-right, the RIGHT EDGE OF IMAGE, positive X, lifting the body briefly off the floor line, ending at the highest extended fist pose without landing or retracting.',
+    motion: 'From the exact supplied stance, crouch low, then explode straight up into one vertical uppercut: the lead fist travels from hip level straight upward close to the chest and face, finishing directly above the head with the arm fully extended toward the TOP EDGE OF IMAGE, while the whole body leaves the floor line in one short vertical jump. The fist travels vertically, not forward toward screen-right; only a slight forward lean of the torso is allowed. Keep the raised fist, head, and both feet fully inside the frame with clear margin. End at the highest point of the jump with the fist overhead, without landing or retracting.',
   },
 ];
 
