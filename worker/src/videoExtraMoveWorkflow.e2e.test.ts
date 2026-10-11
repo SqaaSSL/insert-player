@@ -770,6 +770,82 @@ describe('review-gated extra Video move end to end on the real migrations', () =
     }
   }, 120_000);
 
+  it('generates an uppercut from a recorded headroom derivative and still approves against the sealed RAW', async () => {
+    const target = await harness();
+    try {
+      await seedApprovedChampion(target);
+      installPixcliProxy(target);
+      const sideRaw = await target.db.prepare(`
+        SELECT source.id, source.content_hash FROM fighters fighter
+        JOIN source_versions source ON source.blob_key = fighter.side_view_raw_blob_key
+        WHERE fighter.id = ?
+      `).bind(FIGHTER_ID).first<{ id: string; content_hash: string }>();
+      const derived = png(768, 1024, 99);
+      const derivedSha256 = await hashString(derived);
+      const derivedKey = `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/derived/side_raw_headroom.png`;
+      await target.bucket.put(derivedKey, derived);
+      await target.db.prepare(`
+        INSERT INTO canonical_headroom_derivatives (
+          id, fighter_id, source_kind, source_raw_version_id, source_raw_sha256,
+          derived_blob_key, derived_sha256, transform_json
+        ) VALUES (?, ?, 'side', ?, ?, ?, ?, '{"kind":"headroom-pad-v1","scale":0.8}')
+      `).bind(hex(0x900), FIGHTER_ID, sideRaw!.id, sideRaw!.content_hash, derivedKey, derivedSha256).run();
+
+      const jobId = await startAndGenerate(target, 'uppercut');
+      expect(Buffer.from(String(target.processorRequests[0].canonicalFrameBase64), 'base64'))
+        .toEqual(Buffer.from(derived));
+      expect(await target.db.prepare(`
+        SELECT revision.canonical_blob_key, revision.canonical_sha256
+        FROM video_sprite_candidates candidate
+        JOIN video_sprite_candidate_revisions revision ON revision.candidate_id = candidate.id
+        WHERE candidate.job_id = ?
+      `).bind(jobId).first()).toEqual({ canonical_blob_key: derivedKey, canonical_sha256: derivedSha256 });
+
+      const review = await currentReview(target, jobId);
+      const approved = await approveVideoSpriteReview(post({
+        candidateId: review.candidateId, revision: 1, reportSha256: review.reportSha256,
+      }), target.env, ADMIN, jobId);
+      expect(approved.status).toBe(200);
+      const activated = await activateAdminArcadeVideoExtra(post({ jobId }), target.env, ADMIN, FIGHTER_ID);
+      expect(await activated.json()).toMatchObject({ animation: 'uppercut', published: true });
+      // The reviewed sources themselves are untouched.
+      expect(await target.db.prepare(`
+        SELECT source.content_hash FROM fighters fighter
+        JOIN source_versions source ON source.blob_key = fighter.side_view_raw_blob_key
+        WHERE fighter.id = ?
+      `).bind(FIGHTER_ID).first()).toEqual({ content_hash: sideRaw!.content_hash });
+    } finally {
+      await target.mf.dispose();
+    }
+  }, 120_000);
+
+  it('refuses to approve a headroom canonical whose derivative row was never recorded', async () => {
+    const target = await harness();
+    try {
+      await seedApprovedChampion(target);
+      installPixcliProxy(target);
+      const jobId = await startAndGenerate(target, 'uppercut');
+      const derived = png(768, 1024, 98);
+      const derivedKey = `users/${USER_ID}/fighters/${FIGHTER_ID}/sources/derived/unrecorded.png`;
+      await target.bucket.put(derivedKey, derived);
+      // Simulate a revision pointing at an unrecorded image by rewriting the
+      // immutable revision underneath (drop its guard for this negative case).
+      await target.db.prepare('DROP TRIGGER IF EXISTS video_sprite_candidate_revisions_immutable').run();
+      await target.db.prepare(`
+        UPDATE video_sprite_candidate_revisions SET canonical_blob_key = ?, canonical_sha256 = ?
+        WHERE candidate_id = (SELECT id FROM video_sprite_candidates WHERE job_id = ?)
+      `).bind(derivedKey, await hashString(derived), jobId).run();
+      const review = await currentReview(target, jobId);
+      const approved = await approveVideoSpriteReview(post({
+        candidateId: review.candidateId, revision: 1, reportSha256: review.reportSha256,
+      }), target.env, ADMIN, jobId);
+      expect(approved.status).not.toBe(200);
+      expect(await approved.json()).toMatchObject({ error: expect.stringMatching(/does not match its sealed action source/) });
+    } finally {
+      await target.mf.dispose();
+    }
+  }, 120_000);
+
   it('rejects a fireball candidate, publishes nothing, and lets a fresh start generate again', async () => {
     const target = await harness();
     try {
